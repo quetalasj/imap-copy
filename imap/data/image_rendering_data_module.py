@@ -7,7 +7,7 @@ from .tum_dataset_factory import TUMDatasetFactory
 
 
 class ImageRenderingDataModule(pl.LightningDataModule):
-    def __init__(self, dataset_name, batch_size=4096, num_workers=4, **dataset_params):
+    def __init__(self, dataset_name, batch_size=4096, num_workers=1, **dataset_params):
         super().__init__()
         self._batch_size = batch_size
         self._num_workers = num_workers
@@ -18,7 +18,7 @@ class ImageRenderingDataModule(pl.LightningDataModule):
         print(f"[ToyDataModule] - train subset size {len(self._dataset)}")
 
     def train_dataloader(self, *args, **kwargs):
-        return torch.utils.data.DataLoader(self._dataset, self._batch_size, shuffle=True, pin_memory=False,
+        return torch.utils.data.DataLoader(self._dataset, self._batch_size, shuffle=False, pin_memory=False,
                                            num_workers=self._num_workers)
 
     def camera_info(self):

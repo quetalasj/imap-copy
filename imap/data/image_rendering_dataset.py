@@ -14,6 +14,9 @@ class ImageRenderingDataset(data.Dataset):
         self._depth_images = camera_info.process_depth_image(depth_images)
         self._positions = camera_info.process_positions(positions)
         print(f"Dataset size: {len(self)} pixels")
+        self._num_points_per_frame = int(640 * 480 / 100)
+        self._trained_points = 0
+        self._iteration_index = 0
 
     def __len__(self):
         color_image_shape = self._color_images.shape
@@ -21,9 +24,22 @@ class ImageRenderingDataset(data.Dataset):
 
     def __getitem__(self, index):
         image_count, height, width = self._color_images.shape[:3]
-        image_index = index // (width * height)
-        y = (index % (width * height)) // width
-        x = (index % (width * height)) % width
+
+        # image_index = index // (width * height)
+
+        image_index = self._iteration_index
+        self._trained_points += 1
+        # print(self._trained_points)
+        if self._trained_points >= self._num_points_per_frame:
+            self._iteration_index += 1
+            self._trained_points = 0
+            if self._iteration_index >= image_count:
+                self._iteration_index = 0
+
+        # y = (index % (width * height)) // width
+        # x = (index % (width * height)) % width
+        x = np.random.randint(width)
+        y = np.random.randint(height)
         return {
             "pixel": np.array([x, y], dtype=np.float32),
             "color": self._color_images[image_index, y, x],
