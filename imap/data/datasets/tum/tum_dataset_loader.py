@@ -5,11 +5,9 @@ import numpy as np
 class TUMDatasetLoader(object):
     def __init__(self, color_images, depth_images, positions):
         """
-        :param color_image_paths:
-        :param depth_image_paths:
+        :param color_images:
+        :param depth_images:
         :param positions:
-        :param factor: 5000.0 for the 16-bit PNG files
-        OR: factor = 1 for the 32-bit float images in the ROS bag files
         """
         self._color_image = color_images
         self._depth_image = depth_images
