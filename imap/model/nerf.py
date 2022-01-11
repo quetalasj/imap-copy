@@ -53,7 +53,7 @@ class NERF(BaseLightningModule):
         sampled_depths = torch.sort(sampled_depths, dim=0).values
         sampled_depths = sampled_depths.reshape(-1)
         pixels = self.repeat_tensor(pixels, bins_count)
-        camera_positions = self.repeat_tensor(camera_positions, bins_count)
+
         back_projected_points = back_project_pixel(pixels, sampled_depths, camera_positions,
                                                    self._inverted_camera_matrix)
         encodings = self._positional_encoding(back_projected_points)

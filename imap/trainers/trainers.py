@@ -32,7 +32,6 @@ class ModelTrainer:
         data_batch['pixel'] = data_batch['pixel'].cuda()
         data_batch['color'] = data_batch['color'].cuda()
         data_batch['depth'] = data_batch['depth'].cuda()
-        data_batch['camera_position'] = data_batch['camera_position'][None].repeat(data_batch['pixel'].shape[0], 1, 1)
         data_batch['camera_position'] = data_batch['camera_position'].cuda()
         self.optimizer.zero_grad()
         _, loss = model.loss(data_batch)    # TODO: separate forward & loss
@@ -110,7 +109,6 @@ class ModelTrainer2:
         data_batch['pixel'] = data_batch['pixel'].cuda()
         data_batch['color'] = data_batch['color'].cuda()
         data_batch['depth'] = data_batch['depth'].cuda()
-        data_batch['camera_position'] = data_batch['camera_position'][None].repeat(data_batch['pixel'].shape[0], 1, 1)
         data_batch['camera_position'] = data_batch['camera_position'].cuda()
         self.optimizer.zero_grad()
         _, loss = model.loss(data_batch)  # TODO: separate forward & loss
