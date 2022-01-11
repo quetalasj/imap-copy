@@ -1,13 +1,9 @@
 import torch
-from torch.utils.data import DataLoader
 
 
 class ModelTrainer:
-    def __init__(self, model):
-        # self._model = model.to(device)
-        # self._optimizer = self._model.configure_optimizers()
-        model.to('cuda')
-        self.optimizer = model.configure_optimizers()
+    def __init__(self, model, lr=0.005):
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         self.opt_params = None
 
     def train(self, model, data_batch):

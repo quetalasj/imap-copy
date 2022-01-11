@@ -1,18 +1,30 @@
 import torch
 import torch.nn as nn
 
-from .base_lightning_model import BaseLightningModule
-from .gaussian_positional_encoding import GaussianPositionalEncoding
-from .mlp import MLP
+from imap.model.implicit_representations.mlp import MLP
 from ..utils.torch_math import back_project_pixel, matrix_from_9d_position
 
 
-class NERF(BaseLightningModule):
-    def __init__(self, parameters, camera_info):
-        super().__init__(parameters)
-        self._mlp = MLP(parameters.encoding_dimension, 4)
-        self._positional_encoding = GaussianPositionalEncoding(encoding_dimension=parameters.encoding_dimension,
-                                                               sigma=parameters.encoding_sigma)
+class NERF(nn.Module):
+    def __init__(self,
+                 positional_embedding,
+                 course_sample_bins,
+                 fine_sample_bins,
+                 depth_loss_koef,
+                 color_loss_koef,
+                 minimal_depth,
+                 camera_info
+                 ):
+        super().__init__()
+        self.course_sample_bins = course_sample_bins
+        self.fine_sample_bins = fine_sample_bins
+        self.depth_loss_koef = depth_loss_koef
+        self.color_loss_koef = color_loss_koef
+        self.minimal_depth = minimal_depth
+
+        self._positional_encoding = positional_embedding
+        self._mlp = MLP(self._positional_encoding.encoding_dimension, 4)
+
         self._inverted_camera_matrix = torch.tensor(camera_info.get_inverted_camera_matrix())
         self._default_color = torch.tensor(camera_info.get_default_color())
         self._default_depth = torch.tensor(camera_info.get_default_depth())
@@ -24,7 +36,7 @@ class NERF(BaseLightningModule):
             course_sampled_depths = self.stratified_sample_depths(
                 pixel.shape[0],
                 pixel.device,
-                self.hparams.course_sample_bins,
+                self.course_sample_bins,
                 not self.training)
         course_color, course_depths, course_weights, course_depth_variance = self.reconstruct_color_and_depths(
             course_sampled_depths,
@@ -36,7 +48,7 @@ class NERF(BaseLightningModule):
                 course_weights,
                 pixel.shape[0],
                 pixel.device,
-                self.hparams.fine_sample_bins,
+                self.fine_sample_bins,
                 course_sampled_depths,
                 not self.training)
         fine_sampled_depths = torch.cat([fine_sampled_depths, course_sampled_depths], dim=0)
@@ -73,14 +85,14 @@ class NERF(BaseLightningModule):
 
     def stratified_sample_depths(self, batch_size, device, bins_count, deterministic=False):
         if deterministic:
-            depth_delta = (self._default_depth.item() - self.hparams.minimal_depth) / bins_count
-            result = torch.arange(self.hparams.minimal_depth, self._default_depth.item(), depth_delta, device=device)
+            depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
+            result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device)
             result = torch.repeat_interleave(result[:, None], batch_size, dim=1)
             return result
         uniform = torch.rand((bins_count, batch_size), device=device)
         uniform[0] = 1
         result = (torch.arange(bins_count, device=device)[:, None] + uniform - 1
-                  ) * (self._default_depth - self.hparams.minimal_depth) / (bins_count - 1) + self.hparams.minimal_depth
+                  ) * (self._default_depth - self.minimal_depth) / (bins_count - 1) + self.minimal_depth
         return result
 
     def hierarchical_sample_depths(self, weights, batch_size, device, bins_count, bins, deterministic=False):
@@ -165,7 +177,7 @@ class NERF(BaseLightningModule):
         # depth_loss = course_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
         depth_loss = fine_depth_loss
-        loss = self.hparams.color_loss_koef * image_loss + self.hparams.depth_loss_koef * depth_loss
+        loss = self.color_loss_koef * image_loss + self.depth_loss_koef * depth_loss
         if reduction:
             course_depth_loss = torch.mean(course_depth_loss)
             course_image_loss = torch.mean(course_image_loss)
