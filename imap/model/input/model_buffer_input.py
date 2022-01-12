@@ -44,7 +44,7 @@ class ModelBufferInput:
                 "pixel": torch.from_numpy(np.array([x, y], dtype=np.float32).T),
                 "color": torch.from_numpy(state.frame.color_image[y, x]),
                 "depth": torch.from_numpy(state.frame.depth_image[y, x]),
-                "camera_position": torch.from_numpy(state.position)
+                "camera_position": state.get_matrix_position()
                 }
         assert len(result['pixel'].shape) == 2 and result['pixel'].shape[1] == 2
         assert len(result['color'].shape) == 2 and result['color'].shape[1] == 3

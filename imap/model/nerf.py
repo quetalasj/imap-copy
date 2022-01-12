@@ -32,6 +32,12 @@ class NERF(nn.Module):
         self._positions = None
 
     def forward(self, pixel, camera_position):
+        """
+        :param pixel:
+        :param camera_position: [[R 0],
+                                [T 1]]
+        :return:
+        """
         with torch.no_grad():
             course_sampled_depths = self.stratified_sample_depths(
                 pixel.shape[0],
@@ -41,7 +47,7 @@ class NERF(nn.Module):
         course_color, course_depths, course_weights, course_depth_variance = self.reconstruct_color_and_depths(
             course_sampled_depths,
             pixel,
-            camera_position,
+            camera_position.T,
             self._mlp)
         with torch.no_grad():
             fine_sampled_depths = self.hierarchical_sample_depths(
@@ -56,7 +62,7 @@ class NERF(nn.Module):
         fine_color, fine_depths, fine_weights, fine_depth_variance = self.reconstruct_color_and_depths(
             fine_sampled_depths,
             pixel,
-            camera_position,
+            camera_position.T,
             self._mlp)
         return course_color, course_depths, fine_color, fine_depths, course_depth_variance, fine_depth_variance
 
@@ -164,8 +170,7 @@ class NERF(nn.Module):
                          ) + (default_depth.to(depths.device)[None] - mean_depths) ** 2 * weights[-1]
 
     def loss(self, batch, reduction=True):
-        camera_position = self.positions_from_batch(batch)
-        output = self.forward(batch["pixel"], camera_position)
+        output = self.forward(batch["pixel"], batch['camera_position'])
         mask = (batch["depth"] > 1e-12) & (batch["depth"] < self._default_depth)
         course_image_loss = torch.mean(self._loss(output[0], batch["color"]), dim=1)
         course_depth_weights = 1. / (torch.sqrt(output[4]) + 1e-10) * mask
@@ -192,12 +197,3 @@ class NERF(nn.Module):
             "loss": loss
         }
         return output, losses
-
-    def positions_from_batch(self, batch):
-        if "camera_position" in batch.keys():
-            return batch["camera_position"]
-        indexes = batch["frame_index"]
-        return matrix_from_9d_position(self._positions[indexes])
-
-    def set_positions(self, position):
-        self._positions = position
