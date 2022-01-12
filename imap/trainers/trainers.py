@@ -25,10 +25,8 @@ class ModelTrainer:
         if self.opt_params is not None:
             self.optimizer.load_state_dict(self.opt_params)
 
-        data_batch['pixel'] = data_batch['pixel'].cuda()
-        data_batch['color'] = data_batch['color'].cuda()
-        data_batch['depth'] = data_batch['depth'].cuda()
-        data_batch['camera_position'] = data_batch['camera_position'].cuda()
+        ModelTrainer.send_batch_to_model_device(data_batch)
+
         self.optimizer.zero_grad()
         _, loss = model.loss(data_batch)    # TODO: separate forward & loss
         loss['loss'].backward()
@@ -38,4 +36,11 @@ class ModelTrainer:
 
     def reset_params(self):
         self.opt_params = None
+
+    @staticmethod
+    def send_batch_to_model_device(batch):
+        batch['pixel'] = batch['pixel'].cuda()
+        batch['color'] = batch['color'].cuda()
+        batch['depth'] = batch['depth'].cuda()
+        batch['camera_position'] = batch['camera_position'].cuda()
 
