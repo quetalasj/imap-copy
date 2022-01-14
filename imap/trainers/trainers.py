@@ -2,8 +2,8 @@ import torch
 
 
 class ModelTrainer:
-    def __init__(self, model, lr=0.005):
-        self.optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    def __init__(self, parameters, lr=0.005, **kwargs):
+        self.optimizer = torch.optim.Adam(parameters, lr=lr, **kwargs)
         self.opt_params = None
 
     def train(self, model, data_batch):
@@ -28,7 +28,8 @@ class ModelTrainer:
         ModelTrainer.send_batch_to_model_device(data_batch)
 
         self.optimizer.zero_grad()
-        _, loss = model.loss(data_batch)    # TODO: separate forward & loss
+        output = model.forward(data_batch["pixel"], data_batch['camera_position'])
+        loss = model.loss(output, data_batch['color'], data_batch['depth'])
         loss['loss'].backward()
         self.optimizer.step()
         self.opt_params = self.optimizer.state_dict()

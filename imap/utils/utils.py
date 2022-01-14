@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 def generate_image_meshgrid(height, width, scale):
@@ -52,3 +53,14 @@ def get_depths_in_pixels(depth_image, pixels):
 
 def get_colors_in_pixels(color_image, pixels):
     return get_image_values_in_pixels(color_image, pixels)
+
+
+def reshape_points_list_to_image(points_list, height, width, scale):
+    return torch.cat(points_list, dim=0).reshape(height // scale,
+                                                 width // scale,
+                                                 3)
+
+
+def reshape_points_list_to_depth(points_list, height, width, scale):
+    return torch.cat(points_list, dim=0).reshape(height // scale,
+                                                 width // scale)

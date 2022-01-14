@@ -169,15 +169,14 @@ class NERF(nn.Module):
         return torch.sum((depths - mean_depths[None]) ** 2 * weights[:-1], dim=0
                          ) + (default_depth.to(depths.device)[None] - mean_depths) ** 2 * weights[-1]
 
-    def loss(self, batch, reduction=True):
-        output = self.forward(batch["pixel"], batch['camera_position'])
-        mask = (batch["depth"] > 1e-12) & (batch["depth"] < self._default_depth)
-        course_image_loss = torch.mean(self._loss(output[0], batch["color"]), dim=1)
+    def loss(self, output, true_colors, true_depths, reduction=True):
+        mask = (true_depths > 1e-12) & (true_depths < self._default_depth)
+        course_image_loss = torch.mean(self._loss(output[0], true_colors), dim=1)
         course_depth_weights = 1. / (torch.sqrt(output[4]) + 1e-10) * mask
-        course_depth_loss = self._loss(output[1] * course_depth_weights, batch["depth"] * course_depth_weights)
-        fine_image_loss = torch.mean(self._loss(output[2], batch["color"]), dim=1)
+        course_depth_loss = self._loss(output[1] * course_depth_weights, true_depths * course_depth_weights)
+        fine_image_loss = torch.mean(self._loss(output[2], true_colors), dim=1)
         fine_depth_weights = 1. / (torch.sqrt(output[5]) + 1e-10) * mask
-        fine_depth_loss = self._loss(output[3] * fine_depth_weights, batch["depth"] * fine_depth_weights)
+        fine_depth_loss = self._loss(output[3] * fine_depth_weights, true_depths * fine_depth_weights)
         # image_loss = course_image_loss + fine_image_loss
         # depth_loss = course_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
@@ -196,4 +195,4 @@ class NERF(nn.Module):
             "fine_depth_loss": fine_depth_loss,
             "loss": loss
         }
-        return output, losses
+        return losses
