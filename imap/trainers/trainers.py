@@ -29,11 +29,20 @@ class ModelTrainer:
 
         self.optimizer.zero_grad()
         output = model.forward(data_batch["pixel"], data_batch['camera_position'])
-        loss = model.loss(output, data_batch['color'], data_batch['depth'])
-        loss['loss'].backward()
+        losses = model.losses(output, data_batch['color'], data_batch['depth'])
+        mean_loss = model.mean_loss(losses['loss'])
+        mean_loss.backward()
         self.optimizer.step()
         self.opt_params = self.optimizer.state_dict()
-        return loss['loss'].item()
+
+        return_losses = {
+            "coarse_image_loss": model.mean_loss(losses['coarse_image_loss']).item(),
+            "coarse_depth_loss": model.mean_loss(losses['coarse_depth_loss']).item(),
+            "fine_image_loss": model.mean_loss(losses['fine_image_loss']).item(),
+            "fine_depth_loss": model.mean_loss(losses['fine_depth_loss']).item(),
+            "loss": mean_loss.item()
+        }
+        return return_losses
 
     def reset_params(self):
         self.opt_params = None

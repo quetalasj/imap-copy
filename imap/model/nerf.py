@@ -169,30 +169,48 @@ class NERF(nn.Module):
         return torch.sum((depths - mean_depths[None]) ** 2 * weights[:-1], dim=0
                          ) + (default_depth.to(depths.device)[None] - mean_depths) ** 2 * weights[-1]
 
-    def loss(self, output, true_colors, true_depths, reduction=True):
+    def photometric_loss(self, rendered_colors, true_colors):
+        return torch.mean(self._loss(rendered_colors, true_colors), dim=1)
+
+    def geometric_loss(self, rendered_depths, true_depths):
+        return self._loss(rendered_depths, true_depths)
+
+    def normalized_geometric_loss(self, geometric_loss, depth_variance):
+        return geometric_loss / depth_variance
+
+    def losses(self, output, true_colors, true_depths):
+        """
+        Return photometric & geometric losses for fine & coarse reconstructions
+        :param output:
+        :param true_colors:
+        :param true_depths:
+        :return:
+        """
+        course_image_loss = self.photometric_loss(output[0], true_colors)
+        fine_image_loss = self.photometric_loss(output[2], true_colors)
+
         mask = (true_depths > 1e-12) & (true_depths < self._default_depth)
-        course_image_loss = torch.mean(self._loss(output[0], true_colors), dim=1)
-        course_depth_weights = 1. / (torch.sqrt(output[4]) + 1e-10) * mask
-        course_depth_loss = self._loss(output[1] * course_depth_weights, true_depths * course_depth_weights)
-        fine_image_loss = torch.mean(self._loss(output[2], true_colors), dim=1)
-        fine_depth_weights = 1. / (torch.sqrt(output[5]) + 1e-10) * mask
-        fine_depth_loss = self._loss(output[3] * fine_depth_weights, true_depths * fine_depth_weights)
+        coarse_depth_loss = self.normalized_geometric_loss(
+            self.geometric_loss(output[1], true_depths),
+            torch.sqrt(output[4]) + 1e-10
+        ) * mask
+        fine_depth_loss = self.normalized_geometric_loss(
+            self.geometric_loss(output[3], true_depths),
+            torch.sqrt(output[5]) + 1e-10
+        ) * mask
         # image_loss = course_image_loss + fine_image_loss
-        # depth_loss = course_depth_loss + fine_depth_loss
+        # depth_loss = coarse_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
         depth_loss = fine_depth_loss
         loss = self.color_loss_koef * image_loss + self.depth_loss_koef * depth_loss
-        if reduction:
-            course_depth_loss = torch.mean(course_depth_loss)
-            course_image_loss = torch.mean(course_image_loss)
-            fine_depth_loss = torch.mean(fine_depth_loss)
-            fine_image_loss = torch.mean(fine_image_loss)
-            loss = torch.mean(loss)
         losses = {
-            "course_image_loss": course_image_loss,
-            "course_depth_loss": course_depth_loss,
+            "coarse_image_loss": course_image_loss,
+            "coarse_depth_loss": coarse_depth_loss,
             "fine_image_loss": fine_image_loss,
             "fine_depth_loss": fine_depth_loss,
             "loss": loss
         }
         return losses
+
+    def mean_loss(self, loss):
+        return torch.mean(loss)
