@@ -16,13 +16,19 @@ class Camera(object):
 
     def create_state(self, color_image, depth_image, position):
         processed_color_image = self.process_color_image(color_image)
-        processed_depth_image = self.process_depth_image(depth_image)[0]
+        processed_depth_image, valid_pixels = self.process_depth_image(depth_image)
         processed_position = self.process_positions(position)
-        return State(processed_color_image, processed_depth_image, processed_position)
+        return State(processed_color_image, processed_depth_image, valid_pixels, processed_position)
 
     def process_depth_image(self, depth_image):
-        depth_image = self.convert_depths(depth_image)
-        return np.clip(depth_image, 0, self._clip_depth_distance_threshold)
+        depth_image = self.convert_depths(depth_image)[0]
+        processed_depth_image = np.clip(depth_image, 0, self._clip_depth_distance_threshold)
+        valid_depth_pixels = np.all(
+            np.concatenate(((depth_image > 0)[:, :, None],
+                            (depth_image < self._clip_depth_distance_threshold)[:, :, None]),
+                           axis=-1),
+            axis=-1)
+        return processed_depth_image, valid_depth_pixels
 
     def convert_depths(self, depth_image):
         """

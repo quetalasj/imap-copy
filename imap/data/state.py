@@ -9,17 +9,19 @@ class State:
     def __init__(self,
                  color_image,
                  depth_image,
+                 valid_pixels,
                  position,
                  ground_truth_position=None):
         """
         :param color_image:
         :param depth_image:
+        :param valid_pixels:
         :param position:    [[R 0],
                             [T 1]]
         :param ground_truth_position:   [[R 0],
                                         [T 1]]
         """
-        self.frame = Frame(color_image, depth_image)
+        self.frame = Frame(color_image, depth_image, valid_pixels)
 
         State.check_position(position)
         if ground_truth_position is not None:
@@ -40,7 +42,7 @@ class State:
         # return matrix_from_9d_position(self.position[None])[0].cpu().detach().numpy()
     @staticmethod
     def check_position(position):
-        assert len(position.shape) == 2
+        assert position.shape == (4, 4)
         assert np.all(position[:3, 3] == 0)
 
     def train_position(self):
