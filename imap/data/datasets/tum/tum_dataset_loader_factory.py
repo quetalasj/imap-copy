@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
 
-from imap.camera.camera_info import CameraInfo
+from imap.camera.camera import Camera
 from .tum_dataset_loader import TUMDatasetLoader
 
 DEFAULT_CAMERA_MATRIX = np.array([[525.0, 0, 319.5],
@@ -31,8 +31,8 @@ class TUMDatasetLoaderFactory(object):
         color_images = np.array([cv2.imread(x).astype(np.float32) for x in color_image_paths])
         depth_images = np.array(
             [cv2.imread(x, cv2.IMREAD_UNCHANGED).astype(np.float32) / factor for x in depth_image_paths])
-        camera_info = CameraInfo(clip_depth_distance_threshold=clip_distance_threshold, camera_matrix=camera_matrix,
-                                 distance_koef=distance_koef)
+        camera_info = Camera(clip_depth_distance_threshold=clip_distance_threshold, camera_matrix=camera_matrix,
+                             distance_koef=distance_koef)
         return camera_info, TUMDatasetLoader(color_images, depth_images, positions)
 
     @staticmethod
