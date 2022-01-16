@@ -32,14 +32,7 @@ class State:
             position9d = transforms.se3_log_map(torch.tensor(position, device='cpu', dtype=torch.float32)[None])[0]
         self._position = position9d.clone().detach()
         self.freeze_position()
-        # self.optimizer = torch.optim.Adam(params=[self.position], lr=lr)
-        # self.weight = weight
-        # self.region_weights = region_weights if region_weights is not None else np.ones((8, 8))
 
-    # @property
-    # def matrix_position(self):
-    #     return torch.transpose(transforms.se3_exp_map(self.position[None]), 1, 2)[0].cpu().detach().numpy()
-        # return matrix_from_9d_position(self.position[None])[0].cpu().detach().numpy()
     @staticmethod
     def check_position(position):
         assert position.shape == (4, 4)
