@@ -189,15 +189,14 @@ class NERF(nn.Module):
         course_image_loss = self.photometric_loss(output[0], true_colors)
         fine_image_loss = self.photometric_loss(output[2], true_colors)
 
-        mask = (true_depths > 1e-12) & (true_depths < self._default_depth)
         coarse_depth_loss = self.normalized_geometric_loss(
             self.geometric_loss(output[1], true_depths),
             torch.sqrt(output[4]) + 1e-10
-        ) * mask
+        )
         fine_depth_loss = self.normalized_geometric_loss(
             self.geometric_loss(output[3], true_depths),
             torch.sqrt(output[5]) + 1e-10
-        ) * mask
+        )
         # image_loss = course_image_loss + fine_image_loss
         # depth_loss = coarse_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
