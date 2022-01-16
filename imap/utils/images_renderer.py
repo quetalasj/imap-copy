@@ -3,7 +3,7 @@ import numpy as np
 
 from imap.utils.utils import (
     generate_image_meshgrid,
-    get_pixels_from_meshgrid,
+    get_ji_pixels_from_meshgrid,
     reshape_points_list_to_image,
     reshape_points_list_to_depth
 )
@@ -26,7 +26,7 @@ class ImagesRenderer:
 
     def _generate_image_frame(self):
         x, y = generate_image_meshgrid(self.height, self.width, self.scale)
-        pixels = torch.from_numpy(get_pixels_from_meshgrid(x, y, self.scale)).requires_grad_(False)
+        pixels = torch.from_numpy(get_ji_pixels_from_meshgrid(x, y, self.scale)).requires_grad_(False)
         return pixels
 
     def _yield_render(self, model, position):

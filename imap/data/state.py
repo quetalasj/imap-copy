@@ -9,19 +9,19 @@ class State:
     def __init__(self,
                  color_image,
                  depth_image,
-                 valid_pixels,
+                 pixel_weights,
                  position,
                  ground_truth_position=None):
         """
         :param color_image:
         :param depth_image:
-        :param valid_pixels:
+        :param pixel_weights:
         :param position:    [[R 0],
                             [T 1]]
         :param ground_truth_position:   [[R 0],
                                         [T 1]]
         """
-        self.frame = Frame(color_image, depth_image, valid_pixels)
+        self.frame = Frame(color_image, depth_image, pixel_weights)
 
         State.check_position(position)
         if ground_truth_position is not None:
