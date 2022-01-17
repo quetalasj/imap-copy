@@ -1,43 +1,108 @@
-from imap.utils.utils import generate_image_meshgrid, get_ij_pixels_from_meshgrid
+from imap.utils.utils import generate_image_meshgrid, get_ji_pixels_from_meshgrid
 import numpy as np
+import torch
 
 
 class ImageActiveSampling:
-    def __init__(self, image_width, image_height, grid_size=(8, 8)):
+    def __init__(self, image_width, image_height, points_per_frame, grid_size=(8, 8)):
         self._grid_width = grid_size[0]
         self._grid_height = grid_size[1]
         self._image_width = image_width
         self._image_height = image_height
+        self._points_per_frame = points_per_frame
+
         x, y = generate_image_meshgrid(self._image_width, self._image_height, scale=1)
-        self._sampling_pixels = get_ij_pixels_from_meshgrid(x, y)
+        self._sampling_pixels = get_ji_pixels_from_meshgrid(x, y)
         self._random_generator = np.random.default_rng()
 
-    def sample_pixels(self, size, p):
+        self._grid_pattern = self.generate_grid_pattern().cuda()
+        self._default_pixel_weights = np.ones(self._image_width * self._image_height, dtype=np.float32)
+
+        self._grid_masks = self.get_grid_masks()
+
+
+    @staticmethod
+    def get_training_data(state, y, x):
+        result = {
+                "pixel": torch.from_numpy(np.array([x, y], dtype=np.float32).T),
+                "color": torch.from_numpy(state.frame.color_image[y, x]),
+                "depth": torch.from_numpy(state.frame.depth_image[y, x]),
+                "camera_position": state.get_matrix_position()
+                }
+        assert len(result['pixel'].shape) == 2 and result['pixel'].shape[1] == 2
+        assert len(result['color'].shape) == 2 and result['color'].shape[1] == 3
+        assert len(result['depth'].shape) == 1
+        assert len(result['camera_position'].shape) == 2 and result['camera_position'].shape[0] == 4 and \
+               result['camera_position'].shape[1] == 4
+        return result
+
+    def sample_pixels(self, p):
         """
-        :param size: num pixels to sample
         :param p: probabilities.shape = (self._image_width * self._image_height)
         :return: i(y), j(x) coordinates
         """
-        pixels = self._random_generator.choice(self._sampling_pixels, size, p=p, axis=0, shuffle=False)
-        return pixels[:, 0], pixels[:, 1]
+        pixels = self._random_generator.choice(self._sampling_pixels,
+                                               self._points_per_frame, p=p, axis=0, shuffle=False)
+        return pixels[:, 1], pixels[:, 0]
 
-    # def sample_pixels(self, image_shape):
-    #     x = np.random.randint(image_shape[1], size=self._points_per_frame)
-    #     y = np.random.randint(image_shape[0], size=self._points_per_frame)
-    #     return x, y
+    def estimate_pixels_weights(self, pixels, losses, prior_probs=None):
+        """
+        Estimate new weights for image pixels based on their losses
+        :param pixels: (x, y)
+        :param losses:
+        :param prior_probs:
+        :return:
+        """
+        with torch.no_grad():
+            for grid_square, mask in zip(self._grid_pattern, self._grid_masks):
+                upper_left = grid_square[0]
+                lower_right = grid_square[1]
+                sampled_pixels_mask = torch.logical_and(
+                    torch.all(pixels >= upper_left, dim=1),
+                    torch.all(pixels <= lower_right, dim=1))
 
-    # def sample_pixels_with_region_weights(self, image_shape, region_weights):
-    #     region_height = image_shape[0] // region_weights.shape[0]
-    #     region_width = image_shape[1] // region_weights.shape[1]
-    #     region_y, region_x = np.meshgrid(range(region_weights.shape[0]), range(region_weights.shape[1]))
-    #     region_left = region_x.reshape(-1)
-    #     region_bottom = region_y.reshape(-1)
-    #     normalized_weights = region_weights.reshape(-1) / np.sum(region_weights)
-    #     region_indices = np.random.choice(len(normalized_weights), size=self._points_per_frame,
-    #                                       replace=True, p=normalized_weights)
-    #     x = region_left[region_indices] * region_width + np.random.randint(
-    #         region_width, size=self._points_per_frame)
-    #     y = region_bottom[region_indices] * region_height + np.random.randint(
-    #         region_height, size=self._points_per_frame)
-    #     return x, y
+                average_region_loss = torch.mean(losses[sampled_pixels_mask])
+                if torch.isnan(average_region_loss):
+                    self._default_pixel_weights[mask] = 0
+                else:
+                    self._default_pixel_weights[mask] = average_region_loss.item()
+
+
+            if prior_probs is not None:
+                self._default_pixel_weights *= prior_probs
+
+            self._default_pixel_weights /= np.sum(self._default_pixel_weights)
+            return self._default_pixel_weights
+
+    def generate_grid_pattern(self):
+        """
+        :return: output.shape = (self._grid_width * self._grid_height, 2, 2)
+        """
+        grid = []
+        dx = self._image_width // self._grid_width
+        dy = self._image_height // self._grid_height
+
+        x = np.arange(self._image_width // dx) * dx + dx
+        y = np.arange(self._image_height // dy) * dy + dy
+        for i in range(self._image_height // dy):
+            square = []
+            for j in range(self._image_width // dx):
+                square.append([])
+                square[-1].append([x[j] - dx, y[i] - dy])   # upper left
+                square[-1].append([x[j], y[i]])             # lower right
+
+            grid.append(square)
+        return torch.tensor(grid).reshape((-1, 4, 2))
+
+    def get_grid_masks(self):
+        masks = []
+        for grid_square in self._grid_pattern:
+            upper_left = grid_square[0].cpu().numpy()
+            lower_right = grid_square[1].cpu().numpy()
+            all_pixels_mask = np.logical_and(
+                np.all(self._sampling_pixels >= upper_left, axis=1),
+                np.all(self._sampling_pixels <= lower_right, axis=1))
+            masks.append(all_pixels_mask)
+        return masks
+
 

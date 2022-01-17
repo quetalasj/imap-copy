@@ -184,7 +184,7 @@ class NERF(nn.Module):
         :param output:
         :param true_colors:
         :param true_depths:
-        :return:
+        :return: { "key": array}    array.shape == torch.size([num_points])
         """
         course_image_loss = self.photometric_loss(output[0], true_colors)
         fine_image_loss = self.photometric_loss(output[2], true_colors)
