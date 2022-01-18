@@ -7,7 +7,7 @@ class ModelTrainer:
         self.opt_params = None
         self._image_active_sampler = image_active_sampler
 
-    def train(self, model, state):
+    def train(self, model, state, is_image_active_sampling):
         """
         Train the model one epoch on batch of data
         :param model:
@@ -23,42 +23,58 @@ class ModelTrainer:
         input_data["camera_position"].shape = [4, 4]
         :return:
         """
-        y, x = self._image_active_sampler.sample_pixels(state.frame.get_pixel_probs())
-        data_batch = self._image_active_sampler.get_training_data(state, y, x)
-
-        if self.opt_params is not None:
-            self.optimizer.load_state_dict(self.opt_params)
-
-        ModelTrainer.send_batch_to_model_device(data_batch)
-
+        self.load_optimizer_state()
         self.optimizer.zero_grad()
-        # first sampling
-        output = model.forward(data_batch["pixel"], data_batch['camera_position'])
-        losses = model.losses(output, data_batch['color'], data_batch['depth'])
-        mean_loss = model.mean_loss(losses['loss'])
-        mean_loss.backward()
 
-        # second sampling
-        new_pixel_weights = self._image_active_sampler.estimate_pixels_weights(data_batch['pixel'],
-                                                           losses['loss'],
-                                                           state.frame.get_pixel_probs())
+        losses, data_batch = self.sample_and_backward_batch(state, state.frame.get_pixel_probs(), model)
+        if is_image_active_sampling:
+            new_pixel_weights = self._image_active_sampler.estimate_pixels_weights(
+                data_batch['pixel'],
+                losses['loss'],
+                state.frame.get_pixel_probs())
 
-        y, x = self._image_active_sampler.sample_pixels(new_pixel_weights)
-        data_batch = self._image_active_sampler.get_training_data(state, y, x)
-        ModelTrainer.send_batch_to_model_device(data_batch)
-        
-        output = model.forward(data_batch["pixel"], data_batch['camera_position'])
-        losses = model.losses(output, data_batch['color'], data_batch['depth'])
-        mean_loss = model.mean_loss(losses['loss'])
-        mean_loss.backward()
-        # optimization
+            losses, data_batch = self.sample_and_backward_batch(state, new_pixel_weights, model)
+
         self.optimizer.step()
-        self.opt_params = self.optimizer.state_dict()
+        self.save_optimizer_state()
 
         return losses
 
+    def sample_and_backward_batch(self, state, pixel_weights, model):
+        data_batch = self.sample_batch(state, pixel_weights)
+        return self.backward_batch(model, data_batch), data_batch
+
+    def sample_batch(self, state, weights):
+        y, x = self._image_active_sampler.sample_pixels(weights)
+        data_batch = self._image_active_sampler.get_training_data(state, y, x)
+        ModelTrainer.send_batch_to_model_device(data_batch)
+        return data_batch
+
+    def backward_batch(self, model, data_batch):
+        losses = self.forward_model(model, data_batch)
+        self.backward_mean_loss(model, losses)
+        return losses
+
+    def save_optimizer_state(self):
+        self.opt_params = self.optimizer.state_dict()
+
+    def load_optimizer_state(self):
+        if self.opt_params is not None:
+            self.optimizer.load_state_dict(self.opt_params)
+
+    @staticmethod
+    def forward_model(model, data_batch):
+        output = model.forward(data_batch["pixel"], data_batch['camera_position'])
+        return model.losses(output, data_batch['color'], data_batch['depth'])
+
     def reset_params(self):
         self.opt_params = None
+
+    @staticmethod
+    def backward_mean_loss(model, losses):
+        mean_loss = model.mean_loss(losses['loss'])
+        mean_loss.backward()
+        return mean_loss.item()
 
     @staticmethod
     def send_batch_to_model_device(batch):
