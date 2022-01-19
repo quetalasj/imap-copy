@@ -14,10 +14,13 @@ class Camera(object):
         self._color_std = np.ones(3, dtype=np.float32) * 256.
         self._distance_koef = distance_koef
 
-    def create_state(self, color_image, depth_image, position):
+    def create_state(self, color_image, depth_image, position, process_position=True):
         processed_color_image = self.process_color_image(color_image)
         processed_depth_image, pixel_weights = self.process_depth_image(depth_image)
-        processed_position = self.process_positions(position)
+        if process_position:
+            processed_position = self.process_positions(position)
+        else:
+            processed_position = position
         return State(processed_color_image, processed_depth_image, pixel_weights, processed_position)
 
     def process_depth_image(self, depth_image):

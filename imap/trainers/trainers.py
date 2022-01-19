@@ -23,6 +23,7 @@ class ModelTrainer:
         input_data["camera_position"].shape = [4, 4]
         :return:
         """
+
         self.load_optimizer_state()
         self.optimizer.zero_grad()
 
@@ -36,6 +37,7 @@ class ModelTrainer:
             losses, data_batch = self.sample_and_backward_batch(state, new_pixel_weights, model)
 
         self.optimizer.step()
+        self.optimizer.zero_grad()
         self.save_optimizer_state()
 
         return losses
