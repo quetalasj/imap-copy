@@ -10,7 +10,7 @@ def back_project_pixel(pixel, depth, camera_position, inverted_camera_matrix):
     homogeneous_pixel = torch.cat([pixel, torch.ones((batch_size, 1), device=pixel.device)], dim=1)
     homogeneous_keypoints = inverted_camera_matrix @ homogeneous_pixel[:, :, None]
     local_keypoints = (torch.nn.functional.normalize(homogeneous_keypoints, dim=1)) * depth[:, None, None]
-    result = (camera_position[:, :3, :3] @ local_keypoints + camera_position[:, :3, 3:4])[:, :, 0]
+    result = (camera_position[:3, :3] @ local_keypoints + camera_position[:3, 3:4])[:, :, 0]
     return result
 
 

@@ -1,18 +1,30 @@
 import torch
 import torch.nn as nn
 
-from .base_lightning_model import BaseLightningModule
-from .gaussian_positional_encoding import GaussianPositionalEncoding
-from .mlp import MLP
+from imap.model.implicit_representations.mlp import MLP
 from ..utils.torch_math import back_project_pixel, matrix_from_9d_position
 
 
-class NERF(BaseLightningModule):
-    def __init__(self, parameters, camera_info):
-        super().__init__(parameters)
-        self._mlp = MLP(parameters.encoding_dimension, 4)
-        self._positional_encoding = GaussianPositionalEncoding(encoding_dimension=parameters.encoding_dimension,
-                                                               sigma=parameters.encoding_sigma)
+class NERF(nn.Module):
+    def __init__(self,
+                 positional_embedding,
+                 course_sample_bins,
+                 fine_sample_bins,
+                 depth_loss_koef,
+                 color_loss_koef,
+                 minimal_depth,
+                 camera_info
+                 ):
+        super().__init__()
+        self.course_sample_bins = course_sample_bins
+        self.fine_sample_bins = fine_sample_bins
+        self.depth_loss_koef = depth_loss_koef
+        self.color_loss_koef = color_loss_koef
+        self.minimal_depth = minimal_depth
+
+        self._positional_encoding = positional_embedding
+        self._mlp = MLP(self._positional_encoding.encoding_dimension, 4)
+
         self._inverted_camera_matrix = torch.tensor(camera_info.get_inverted_camera_matrix())
         self._default_color = torch.tensor(camera_info.get_default_color())
         self._default_depth = torch.tensor(camera_info.get_default_depth())
@@ -20,23 +32,29 @@ class NERF(BaseLightningModule):
         self._positions = None
 
     def forward(self, pixel, camera_position):
+        """
+        :param pixel:
+        :param camera_position: [[R 0],
+                                [T 1]]
+        :return:
+        """
         with torch.no_grad():
             course_sampled_depths = self.stratified_sample_depths(
                 pixel.shape[0],
                 pixel.device,
-                self.hparams.course_sample_bins,
+                self.course_sample_bins,
                 not self.training)
         course_color, course_depths, course_weights, course_depth_variance = self.reconstruct_color_and_depths(
             course_sampled_depths,
             pixel,
-            camera_position,
+            camera_position.T,
             self._mlp)
         with torch.no_grad():
             fine_sampled_depths = self.hierarchical_sample_depths(
                 course_weights,
                 pixel.shape[0],
                 pixel.device,
-                self.hparams.fine_sample_bins,
+                self.fine_sample_bins,
                 course_sampled_depths,
                 not self.training)
         fine_sampled_depths = torch.cat([fine_sampled_depths, course_sampled_depths], dim=0)
@@ -44,7 +62,7 @@ class NERF(BaseLightningModule):
         fine_color, fine_depths, fine_weights, fine_depth_variance = self.reconstruct_color_and_depths(
             fine_sampled_depths,
             pixel,
-            camera_position,
+            camera_position.T,
             self._mlp)
         return course_color, course_depths, fine_color, fine_depths, course_depth_variance, fine_depth_variance
 
@@ -53,7 +71,7 @@ class NERF(BaseLightningModule):
         sampled_depths = torch.sort(sampled_depths, dim=0).values
         sampled_depths = sampled_depths.reshape(-1)
         pixels = self.repeat_tensor(pixels, bins_count)
-        camera_positions = self.repeat_tensor(camera_positions, bins_count)
+
         back_projected_points = back_project_pixel(pixels, sampled_depths, camera_positions,
                                                    self._inverted_camera_matrix)
         encodings = self._positional_encoding(back_projected_points)
@@ -73,14 +91,14 @@ class NERF(BaseLightningModule):
 
     def stratified_sample_depths(self, batch_size, device, bins_count, deterministic=False):
         if deterministic:
-            depth_delta = (self._default_depth.item() - self.hparams.minimal_depth) / bins_count
-            result = torch.arange(self.hparams.minimal_depth, self._default_depth.item(), depth_delta, device=device)
+            depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
+            result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device)
             result = torch.repeat_interleave(result[:, None], batch_size, dim=1)
             return result
         uniform = torch.rand((bins_count, batch_size), device=device)
         uniform[0] = 1
         result = (torch.arange(bins_count, device=device)[:, None] + uniform - 1
-                  ) * (self._default_depth - self.hparams.minimal_depth) / (bins_count - 1) + self.hparams.minimal_depth
+                  ) * (self._default_depth - self.minimal_depth) / (bins_count - 1) + self.minimal_depth
         return result
 
     def hierarchical_sample_depths(self, weights, batch_size, device, bins_count, bins, deterministic=False):
@@ -151,41 +169,47 @@ class NERF(BaseLightningModule):
         return torch.sum((depths - mean_depths[None]) ** 2 * weights[:-1], dim=0
                          ) + (default_depth.to(depths.device)[None] - mean_depths) ** 2 * weights[-1]
 
-    def loss(self, batch, reduction=True):
-        camera_position = self.positions_from_batch(batch)
-        output = self.forward(batch["pixel"], camera_position)
-        mask = (batch["depth"] > 1e-12) & (batch["depth"] < self._default_depth)
-        course_image_loss = torch.mean(self._loss(output[0], batch["color"]), dim=1)
-        course_depth_weights = 1. / (torch.sqrt(output[4]) + 1e-10) * mask
-        course_depth_loss = self._loss(output[1] * course_depth_weights, batch["depth"] * course_depth_weights)
-        fine_image_loss = torch.mean(self._loss(output[2], batch["color"]), dim=1)
-        fine_depth_weights = 1. / (torch.sqrt(output[5]) + 1e-10) * mask
-        fine_depth_loss = self._loss(output[3] * fine_depth_weights, batch["depth"] * fine_depth_weights)
+    def photometric_loss(self, rendered_colors, true_colors):
+        return torch.mean(self._loss(rendered_colors, true_colors), dim=1)
+
+    def geometric_loss(self, rendered_depths, true_depths):
+        return self._loss(rendered_depths, true_depths)
+
+    def normalized_geometric_loss(self, geometric_loss, depth_variance):
+        return geometric_loss / depth_variance
+
+    def losses(self, output, true_colors, true_depths):
+        """
+        Return photometric & geometric losses for fine & coarse reconstructions
+        :param output:
+        :param true_colors:
+        :param true_depths:
+        :return: { "key": array}    array.shape == torch.size([num_points])
+        """
+        course_image_loss = self.photometric_loss(output[0], true_colors)
+        fine_image_loss = self.photometric_loss(output[2], true_colors)
+
+        coarse_depth_loss = self.normalized_geometric_loss(
+            self.geometric_loss(output[1], true_depths),
+            torch.sqrt(output[4]) + 1e-10
+        )
+        fine_depth_loss = self.normalized_geometric_loss(
+            self.geometric_loss(output[3], true_depths),
+            torch.sqrt(output[5]) + 1e-10
+        )
         # image_loss = course_image_loss + fine_image_loss
-        # depth_loss = course_depth_loss + fine_depth_loss
+        # depth_loss = coarse_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
         depth_loss = fine_depth_loss
-        loss = self.hparams.color_loss_koef * image_loss + self.hparams.depth_loss_koef * depth_loss
-        if reduction:
-            course_depth_loss = torch.mean(course_depth_loss)
-            course_image_loss = torch.mean(course_image_loss)
-            fine_depth_loss = torch.mean(fine_depth_loss)
-            fine_image_loss = torch.mean(fine_image_loss)
-            loss = torch.mean(loss)
+        loss = self.color_loss_koef * image_loss + self.depth_loss_koef * depth_loss
         losses = {
-            "course_image_loss": course_image_loss,
-            "course_depth_loss": course_depth_loss,
+            "coarse_image_loss": course_image_loss,
+            "coarse_depth_loss": coarse_depth_loss,
             "fine_image_loss": fine_image_loss,
             "fine_depth_loss": fine_depth_loss,
             "loss": loss
         }
-        return output, losses
+        return losses
 
-    def positions_from_batch(self, batch):
-        if "camera_position" in batch.keys():
-            return batch["camera_position"]
-        indexes = batch["frame_index"]
-        return matrix_from_9d_position(self._positions[indexes])
-
-    def set_positions(self, position):
-        self._positions = position
+    def mean_loss(self, loss):
+        return torch.mean(loss)
