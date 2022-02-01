@@ -1,5 +1,5 @@
 import torch
-
+from tqdm.auto import tqdm
 
 class ModelTrainer:
     def __init__(self, parameters,  image_active_sampler, lr=0.005, **kwargs):
@@ -41,6 +41,55 @@ class ModelTrainer:
         self.save_optimizer_state()
 
         return losses
+
+    def localization(self, model, tracking_dataset_loader, camera):
+        poses = []
+        num_epochs = 100
+
+        model.cuda()
+        model.eval()
+        model.requires_grad_(False)
+
+        is_image_active_sampling = False
+
+        is_initialization = True
+
+        for color_image, depth_image, p in tracking_dataset_loader:
+            if is_initialization:
+                current_position = p
+                process_position = True
+            print(current_position)
+
+            state = camera.create_state(color_image, depth_image, current_position, process_position)
+            process_position = False
+            state.train_position()
+            state._position.cuda()
+            if is_initialization:
+                is_initialization = False
+                del self.optimizer
+                self.optimizer = torch.optim.Adam([state._position], lr=0.005)
+            else:
+                self.optimizer.add_param_group({'params': state._position})
+            self.reset_params()
+            # self.optimizer.param_groups.clear()
+            # self.optimizer.state.clear()
+
+            for i in tqdm(range(num_epochs)):
+                loss = self.train(model, state, is_image_active_sampling)
+                if i % 20 == 0:
+                    print(f"loss {torch.mean(loss['loss']).item()}")
+            print("-" * 10)
+
+            state.freeze_position()
+            state._position.cpu()
+
+            current_position = state.get_matrix_position().detach().numpy()
+            poses.append(current_position.copy())
+
+            # self.reset_params()
+
+        torch.cuda.empty_cache()
+        return poses
 
     def sample_and_backward_batch(self, state, pixel_weights, model):
         data_batch = self.sample_batch(state, pixel_weights)
