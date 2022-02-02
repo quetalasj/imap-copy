@@ -1,5 +1,6 @@
 import torch
 from tqdm.auto import tqdm, trange
+from torch.utils.tensorboard import SummaryWriter
 
 class ModelTrainer:
     def __init__(self, parameters,  image_active_sampler, lr=0.005, **kwargs):
@@ -13,16 +14,16 @@ class ModelTrainer:
                     camera,
                     num_epochs,
                     is_image_active_sampling,
-                    verbose_step=5):
+                    verbose=True):
+        if verbose:
+            writer = SummaryWriter()
+        model.requires_grad_(True)
         for i in trange(num_epochs):
             for color_image, depth_image, position in dataset_loader:
                 state = camera.create_state(color_image, depth_image, position)
                 loss = self.train(model, state, is_image_active_sampling)
-
+            ModelTrainer.log_losses(writer, loss, i, verbose=verbose)
             # trainer.reset_params()
-
-            if i % verbose_step == 0:
-                print(f"loss {torch.mean(loss['loss']).item()}")
             # clear_output(wait=True)
         del loss
         torch.cuda.empty_cache()
@@ -32,14 +33,18 @@ class ModelTrainer:
                      tracking_dataset_loader,
                      camera,
                      num_epochs=100,
-                     is_image_active_sampling=False):
+                     is_image_active_sampling=False,
+                     verbose=True):
+        if verbose:
+            writer = SummaryWriter()
+
         poses = []
         model.cuda()
         model.eval()
         model.requires_grad_(False)
         is_initialization = True
 
-        for color_image, depth_image, p in tracking_dataset_loader:
+        for color_image, depth_image, p in tqdm(tracking_dataset_loader):
             if is_initialization:
                 current_position = p
                 state = camera.create_state(color_image, depth_image, current_position, process_position=True)
@@ -55,11 +60,9 @@ class ModelTrainer:
 
             self.reset_params()
 
-            for i in tqdm(range(num_epochs)):
+            for i in trange(num_epochs):
                 loss = self.train(model, state, is_image_active_sampling)
-                if i % 20 == 0:
-                    print(f"loss {torch.mean(loss['loss']).item()}")
-            print("-" * 10)
+                ModelTrainer.log_losses(writer, loss, i, verbose=verbose)
 
             state.freeze_position()
             state._position.cpu()
@@ -147,4 +150,18 @@ class ModelTrainer:
         batch['color'] = batch['color'].cuda()
         batch['depth'] = batch['depth'].cuda()
         batch['camera_position'] = batch['camera_position'].cuda()
+
+    @staticmethod
+    def log_losses(writer, loss, i, verbose):
+        if verbose:
+            writer.add_scalar('image/coarse_image_loss', torch.mean(loss['coarse_image_loss']).item(), i,
+                              new_style=True)
+            writer.add_scalar('image/fine_image_loss', torch.mean(loss['fine_image_loss']).item(), i,
+                              new_style=True)
+            writer.add_scalar('depth/coarse_depth_loss', torch.mean(loss['coarse_depth_loss']).item(), i,
+                              new_style=True)
+            writer.add_scalar('depth/fine_depth_loss', torch.mean(loss['fine_depth_loss']).item(), i,
+                              new_style=True)
+            writer.add_scalar('loss', torch.mean(loss['loss']).item(), i,
+                              new_style=True)
 

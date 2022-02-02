@@ -7,9 +7,13 @@ class Camera(object):
     def __init__(self,
                  clip_depth_distance_threshold,
                  camera_matrix,
+                 image_width,
+                 image_height,
                  distance_koef=1.):
         self._inverted_camera_matrix = np.linalg.inv(camera_matrix)
         self._clip_depth_distance_threshold = clip_depth_distance_threshold * distance_koef
+        self.image_width = image_width
+        self.image_height = image_height
         self._color_mean = np.zeros(3, dtype=np.float32)
         self._color_std = np.ones(3, dtype=np.float32) * 256.
         self._distance_koef = distance_koef
