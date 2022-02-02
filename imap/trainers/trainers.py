@@ -42,37 +42,33 @@ class ModelTrainer:
 
         return losses
 
-    def localization(self, model, tracking_dataset_loader, camera):
+    def localization(self,
+                     model,
+                     tracking_dataset_loader,
+                     camera,
+                     num_epochs=100,
+                     is_image_active_sampling=False):
         poses = []
-        num_epochs = 100
-
         model.cuda()
         model.eval()
         model.requires_grad_(False)
-
-        is_image_active_sampling = False
-
         is_initialization = True
-
+        
         for color_image, depth_image, p in tracking_dataset_loader:
             if is_initialization:
                 current_position = p
-                process_position = True
-            print(current_position)
-
-            state = camera.create_state(color_image, depth_image, current_position, process_position)
-            process_position = False
-            state.train_position()
-            state._position.cuda()
-            if is_initialization:
-                is_initialization = False
-                del self.optimizer
+                state = camera.create_state(color_image, depth_image, current_position, process_position=True)
+                state.train_position()
+                state._position.cuda()
                 self.optimizer = torch.optim.Adam([state._position], lr=0.005)
+                is_initialization = False
             else:
+                state = camera.create_state(color_image, depth_image, current_position, process_position=False)
+                state.train_position()
+                state._position.cuda()
                 self.optimizer.add_param_group({'params': state._position})
+
             self.reset_params()
-            # self.optimizer.param_groups.clear()
-            # self.optimizer.state.clear()
 
             for i in tqdm(range(num_epochs)):
                 loss = self.train(model, state, is_image_active_sampling)
@@ -85,8 +81,6 @@ class ModelTrainer:
 
             current_position = state.get_matrix_position().detach().numpy()
             poses.append(current_position.copy())
-
-            # self.reset_params()
 
         torch.cuda.empty_cache()
         return poses
