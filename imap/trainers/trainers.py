@@ -1,11 +1,74 @@
 import torch
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 
 class ModelTrainer:
     def __init__(self, parameters,  image_active_sampler, lr=0.005, **kwargs):
         self.optimizer = torch.optim.Adam(parameters, lr=lr, **kwargs)
         self.opt_params = None
         self._image_active_sampler = image_active_sampler
+
+    def train_model(self,
+                    model,
+                    dataset_loader,
+                    camera,
+                    num_epochs,
+                    is_image_active_sampling,
+                    verbose_step=5):
+        for i in trange(num_epochs):
+            for color_image, depth_image, position in dataset_loader:
+                state = camera.create_state(color_image, depth_image, position)
+                loss = self.train(model, state, is_image_active_sampling)
+
+            # trainer.reset_params()
+
+            if i % verbose_step == 0:
+                print(f"loss {torch.mean(loss['loss']).item()}")
+            # clear_output(wait=True)
+        del loss
+        torch.cuda.empty_cache()
+
+    def localization(self,
+                     model,
+                     tracking_dataset_loader,
+                     camera,
+                     num_epochs=100,
+                     is_image_active_sampling=False):
+        poses = []
+        model.cuda()
+        model.eval()
+        model.requires_grad_(False)
+        is_initialization = True
+
+        for color_image, depth_image, p in tracking_dataset_loader:
+            if is_initialization:
+                current_position = p
+                state = camera.create_state(color_image, depth_image, current_position, process_position=True)
+                state.train_position()
+                state._position.cuda()
+                self.optimizer = torch.optim.Adam([state._position], lr=0.005)
+                is_initialization = False
+            else:
+                state = camera.create_state(color_image, depth_image, current_position, process_position=False)
+                state.train_position()
+                state._position.cuda()
+                self.optimizer.add_param_group({'params': state._position})
+
+            self.reset_params()
+
+            for i in tqdm(range(num_epochs)):
+                loss = self.train(model, state, is_image_active_sampling)
+                if i % 20 == 0:
+                    print(f"loss {torch.mean(loss['loss']).item()}")
+            print("-" * 10)
+
+            state.freeze_position()
+            state._position.cpu()
+
+            current_position = state.get_matrix_position().detach().numpy()
+            poses.append(current_position.copy())
+
+        torch.cuda.empty_cache()
+        return poses
 
     def train(self, model, state, is_image_active_sampling):
         """
@@ -41,49 +104,6 @@ class ModelTrainer:
         self.save_optimizer_state()
 
         return losses
-
-    def localization(self,
-                     model,
-                     tracking_dataset_loader,
-                     camera,
-                     num_epochs=100,
-                     is_image_active_sampling=False):
-        poses = []
-        model.cuda()
-        model.eval()
-        model.requires_grad_(False)
-        is_initialization = True
-        
-        for color_image, depth_image, p in tracking_dataset_loader:
-            if is_initialization:
-                current_position = p
-                state = camera.create_state(color_image, depth_image, current_position, process_position=True)
-                state.train_position()
-                state._position.cuda()
-                self.optimizer = torch.optim.Adam([state._position], lr=0.005)
-                is_initialization = False
-            else:
-                state = camera.create_state(color_image, depth_image, current_position, process_position=False)
-                state.train_position()
-                state._position.cuda()
-                self.optimizer.add_param_group({'params': state._position})
-
-            self.reset_params()
-
-            for i in tqdm(range(num_epochs)):
-                loss = self.train(model, state, is_image_active_sampling)
-                if i % 20 == 0:
-                    print(f"loss {torch.mean(loss['loss']).item()}")
-            print("-" * 10)
-
-            state.freeze_position()
-            state._position.cpu()
-
-            current_position = state.get_matrix_position().detach().numpy()
-            poses.append(current_position.copy())
-
-        torch.cuda.empty_cache()
-        return poses
 
     def sample_and_backward_batch(self, state, pixel_weights, model):
         data_batch = self.sample_batch(state, pixel_weights)
