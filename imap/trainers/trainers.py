@@ -19,8 +19,7 @@ class ModelTrainer:
             writer = SummaryWriter()
         model.requires_grad_(True)
         for i in trange(num_epochs):
-            for color_image, depth_image, position in dataset_loader:
-                state = camera.create_state(color_image, depth_image, position)
+            for state in dataset_loader:
                 loss = self.train(model, state, is_image_active_sampling)
             ModelTrainer.log_losses(writer, loss, i, verbose=verbose)
             # trainer.reset_params()
@@ -44,23 +43,21 @@ class ModelTrainer:
         model.requires_grad_(False)
         is_initialization = True
 
-        for color_image, depth_image, p in tqdm(tracking_dataset_loader):
+        for state in tqdm(tracking_dataset_loader):
             if is_initialization:
-                current_position = p
-                state = camera.create_state(color_image, depth_image, current_position, process_position=True)
                 state.train_position()
                 state._position.cuda()
                 self.optimizer = torch.optim.Adam([state._position], lr=0.005)
                 is_initialization = False
             else:
-                state = camera.create_state(color_image, depth_image, current_position, process_position=False)
+                state.set_position(current_position)
                 state.train_position()
                 state._position.cuda()
                 self.optimizer.add_param_group({'params': state._position})
 
             self.reset_params()
 
-            for i in trange(num_epochs):
+            for i in trange(num_epochs, leave=False):
                 loss = self.train(model, state, is_image_active_sampling)
                 ModelTrainer.log_losses(writer, loss, i, verbose=verbose)
 
@@ -70,6 +67,7 @@ class ModelTrainer:
             current_position = state.get_matrix_position().detach().numpy()
             poses.append(current_position.copy())
 
+        del state, loss
         torch.cuda.empty_cache()
         return poses
 

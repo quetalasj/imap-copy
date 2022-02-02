@@ -33,7 +33,7 @@ class TUMDatasetLoaderFactory(object):
             [cv2.imread(x, cv2.IMREAD_UNCHANGED).astype(np.float32) / factor for x in depth_image_paths])
         camera_info = Camera(clip_depth_distance_threshold=clip_distance_threshold, camera_matrix=camera_matrix,
                              distance_koef=distance_koef, image_width=640, image_height=480)
-        return camera_info, TUMDatasetLoader(color_images, depth_images, positions)
+        return camera_info, TUMDatasetLoader(camera_info, color_images, depth_images, positions)
 
     @staticmethod
     def tum_position_to_matrix(tum_position):
