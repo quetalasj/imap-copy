@@ -4,11 +4,11 @@ import torch
 
 
 class ImageActiveSampling:
-    def __init__(self, image_width, image_height, points_per_frame, grid_size=(8, 8)):
+    def __init__(self, camera, points_per_frame, grid_size=(8, 8)):
         self._grid_width = grid_size[0]
         self._grid_height = grid_size[1]
-        self._image_width = image_width
-        self._image_height = image_height
+        self._image_width = camera.image_width
+        self._image_height = camera.image_height
         self._points_per_frame = points_per_frame
 
         x, y = generate_image_meshgrid(self._image_width, self._image_height, scale=1)
