@@ -45,16 +45,13 @@ class ModelTrainer:
 
         for state in tqdm(tracking_dataset_loader):
             if is_initialization:
-                state.train_position()
-                state._position.cuda()
-                self.optimizer = torch.optim.Adam([state._position], lr=0.005)
                 is_initialization = False
             else:
                 state.set_position(current_position)
-                state.train_position()
-                state._position.cuda()
-                self.optimizer.add_param_group({'params': state._position})
 
+            state.train_position()
+            state._position.cuda()
+            self.optimizer = torch.optim.Adam([state._position], lr=0.005)
             self.reset_params()
 
             for i in trange(num_epochs, leave=False):
