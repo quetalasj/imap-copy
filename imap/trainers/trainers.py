@@ -68,7 +68,7 @@ class ModelTrainer:
             state._position.cuda()
             optimizer = torch.optim.Adam([state._position], **optimizer_params)
             self.reset_params()
-            for i in trange(num_epochs, leave=False):
+            for i in range(num_epochs):
                 loss = self.train(model, optimizer, state, is_image_active_sampling)
                 ModelTrainer.log_losses(writer, loss, i, verbose=verbose)
 

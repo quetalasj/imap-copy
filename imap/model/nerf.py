@@ -16,6 +16,7 @@ class NERF(nn.Module):
                  camera_info
                  ):
         super().__init__()
+        assert course_sample_bins > 0 and fine_sample_bins > 0
         self.course_sample_bins = course_sample_bins
         self.fine_sample_bins = fine_sample_bins
         self.depth_loss_koef = depth_loss_koef
@@ -25,15 +26,14 @@ class NERF(nn.Module):
         self._positional_encoding = positional_embedding
         self._mlp = MLP(self._positional_encoding.encoding_dimension, 4)
 
-        self._inverted_camera_matrix = torch.tensor(camera_info.get_inverted_camera_matrix())
-        self._default_color = torch.tensor(camera_info.get_default_color())
-        self._default_depth = torch.tensor(camera_info.get_default_depth())
+        self._inverted_camera_matrix = torch.tensor(camera_info.get_inverted_camera_matrix(), requires_grad=False)
+        self._default_color = torch.tensor(camera_info.get_default_color(), requires_grad=False)
+        self._default_depth = torch.tensor(camera_info.get_default_depth(), requires_grad=False)
         self._loss = nn.L1Loss(reduction="none")
-        self._positions = None
 
     def forward(self, pixel, camera_position):
         """
-        :param pixel:
+        :param pixel: (batch_size, 2), [x, y]
         :param camera_position: [[R 0],
                                 [T 1]]
         :return:
@@ -90,6 +90,14 @@ class NERF(nn.Module):
         return reconstructed_color, reconstructed_depths, weights, reconstructed_depth_variance
 
     def stratified_sample_depths(self, batch_size, device, bins_count, deterministic=False):
+        """
+        :param batch_size: int
+        :param bins_count: int
+        :param deterministic: bool
+        :return: (bins_count, batch_size)
+            result[0] - the closest depths
+            result[-1] - the farthest depths
+        """
         if deterministic:
             depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
             result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device)
