@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from imap.model.implicit_representations.mlp import MLP
-from ..utils.torch_math import back_project_pixel, matrix_from_9d_position
+from ..utils.torch_math import back_project_pixel
 
 
 class NERF(nn.Module):
@@ -68,18 +68,13 @@ class NERF(nn.Module):
 
     def reconstruct_color_and_depths(self, sampled_depths, pixels, camera_positions, mlp_model):
         bins_count = sampled_depths.shape[0]
-        sampled_depths = torch.sort(sampled_depths, dim=0).values
-        sampled_depths = sampled_depths.reshape(-1)
-        pixels = self.repeat_tensor(pixels, bins_count)
-
-        back_projected_points = back_project_pixel(pixels, sampled_depths, camera_positions,
+        depths = torch.sort(sampled_depths, dim=0).values
+        back_projected_points = back_project_pixel(pixels, depths, camera_positions,
                                                    self._inverted_camera_matrix)
-        encodings = self._positional_encoding(back_projected_points)
-        prediction = mlp_model(encodings)
+        prediction = self.forward_network(back_projected_points, mlp_model)
 
         colors = torch.sigmoid(prediction[:, :3]).reshape(bins_count, -1, 3)
         density = prediction[:, 3].reshape(bins_count, -1)
-        depths = sampled_depths.reshape(bins_count, -1)
         weights = self.calculate_weights(density, depths)
 
         reconstructed_color = self.reconstruct_color(colors, weights, self._default_color)
@@ -88,6 +83,11 @@ class NERF(nn.Module):
             reconstructed_depth_variance = self.reconstruct_depth_variance(depths, weights, reconstructed_depths,
                                                                            self._default_depth)
         return reconstructed_color, reconstructed_depths, weights, reconstructed_depth_variance
+
+    def forward_network(self, points, mlp_model):
+        encodings = self._positional_encoding(points)
+        prediction = mlp_model(encodings)
+        return prediction
 
     def stratified_sample_depths(self, batch_size, device, bins_count, deterministic=False):
         """
@@ -100,12 +100,13 @@ class NERF(nn.Module):
         """
         if deterministic:
             depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
-            result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device)
+            result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device,
+                                  requires_grad=False)
             result = torch.repeat_interleave(result[:, None], batch_size, dim=1)
             return result
-        uniform = torch.rand((bins_count, batch_size), device=device)
+        uniform = torch.rand((bins_count, batch_size), device=device, requires_grad=False)
         uniform[0] = 1
-        result = (torch.arange(bins_count, device=device)[:, None] + uniform - 1
+        result = (torch.arange(bins_count, device=device, requires_grad=False)[:, None] + uniform - 1
                   ) * (self._default_depth - self.minimal_depth) / (bins_count - 1) + self.minimal_depth
         return result
 
@@ -140,12 +141,6 @@ class NERF(nn.Module):
     def clip_indexes(indexes, minimal, maximal):
         result = torch.max(minimal * torch.ones_like(indexes), indexes)
         result = torch.min(maximal * torch.ones_like(indexes), result)
-        return result
-
-    @staticmethod
-    def repeat_tensor(tensor, bins_count):
-        result = torch.repeat_interleave(tensor[None], bins_count, dim=0)
-        result = result.reshape(-1, *tensor.shape[1:])
         return result
 
     def calculate_weights(self, densities, depths):

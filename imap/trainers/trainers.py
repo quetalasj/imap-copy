@@ -154,11 +154,11 @@ class ModelTrainer:
         return mean_loss.item()
 
     @staticmethod
-    def send_batch_to_model_device(batch):
-        batch['pixel'] = batch['pixel'].cuda()
-        batch['color'] = batch['color'].cuda()
-        batch['depth'] = batch['depth'].cuda()
-        batch['camera_position'] = batch['camera_position'].cuda()
+    def send_batch_to_model_device(batch, device='cuda'):
+        batch['pixel'] = batch['pixel'].to(device)
+        batch['color'] = batch['color'].to(device)
+        batch['depth'] = batch['depth'].to(device)
+        batch['camera_position'] = batch['camera_position'].to(device)
 
     @staticmethod
     def log_losses(writer, loss, i, verbose):
