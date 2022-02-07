@@ -12,9 +12,10 @@ def back_project_pixel(pixel, depth, camera_position, inverted_camera_matrix):
     """
     :param pixel: (batch_size, 2)
     :param depth: (ray_depths, batch_size)
-    :param camera_position:
-    :param inverted_camera_matrix:
-    :return:
+    :param camera_position: [[R T],
+                             [0 1]]
+    :param inverted_camera_matrix: (3, 3)
+    :return: (batch_size, 3)
     """
     batch_size = pixel.shape[0]
     inverted_camera_matrix = inverted_camera_matrix.to(pixel.device)

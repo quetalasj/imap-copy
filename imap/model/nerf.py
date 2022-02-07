@@ -34,8 +34,9 @@ class NERF(nn.Module):
     def forward(self, pixel, camera_position):
         """
         :param pixel: (batch_size, 2), [x, y]
-        :param camera_position: [[R 0],
+        :param camera_position: [[R.t 0],
                                 [T 1]]
+                                supposed that R is transposed for compatability with pytorch3d transformations
         :return:
         """
         with torch.no_grad():
@@ -67,14 +68,21 @@ class NERF(nn.Module):
         return course_color, course_depths, fine_color, fine_depths, course_depth_variance, fine_depth_variance
 
     def reconstruct_color_and_depths(self, sampled_depths, pixels, camera_positions, mlp_model):
+        """
+        :param sampled_depths:
+        :param pixels:
+        :param camera_positions: [[R T],
+                                  [0 1]]
+        :param mlp_model:
+        :return:
+        """
         bins_count = sampled_depths.shape[0]
         depths = torch.sort(sampled_depths, dim=0).values
         back_projected_points = back_project_pixel(pixels, depths, camera_positions,
                                                    self._inverted_camera_matrix)
-        prediction = self.forward_network(back_projected_points, mlp_model)
-
-        colors = torch.sigmoid(prediction[:, :3]).reshape(bins_count, -1, 3)
-        density = prediction[:, 3].reshape(bins_count, -1)
+        colors, density = self.forward_network(back_projected_points, mlp_model)
+        colors = colors.reshape(bins_count, -1, 3)
+        density = density.reshape(bins_count, -1)
         weights = self.calculate_weights(density, depths)
 
         reconstructed_color = self.reconstruct_color(colors, weights, self._default_color)
@@ -85,13 +93,21 @@ class NERF(nn.Module):
         return reconstructed_color, reconstructed_depths, weights, reconstructed_depth_variance
 
     def forward_network(self, points, mlp_model):
+        """
+        :param points: (batch_size, 3)
+        :param mlp_model:
+        :return: colors
+        """
         encodings = self._positional_encoding(points)
         prediction = mlp_model(encodings)
-        return prediction
+        colors = torch.sigmoid(prediction[:, :3])
+        density = torch.relu(prediction[:, 3])
+        return colors, density
 
     def stratified_sample_depths(self, batch_size, device, bins_count, deterministic=False):
         """
         :param batch_size: int
+        :param device
         :param bins_count: int
         :param deterministic: bool
         :return: (bins_count, batch_size)
@@ -146,7 +162,6 @@ class NERF(nn.Module):
     def calculate_weights(self, densities, depths):
         weights = []
         product = 1
-        densities = torch.logsumexp(torch.cat([torch.zeros_like(densities)[None], densities[None]], dim=0), dim=0)
         for i in range(len(depths)):
             if i < len(depths) - 1:
                 depth_delta = depths[i + 1] - depths[i]
