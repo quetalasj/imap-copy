@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from imap.model.implicit_representations.mlp import MLP
-from ..utils.torch_math import back_project_pixel, matrix_from_9d_position
+from ..utils.torch_math import back_project_pixel
 
 
 class NERF(nn.Module):
@@ -16,6 +16,7 @@ class NERF(nn.Module):
                  camera_info
                  ):
         super().__init__()
+        assert course_sample_bins > 0 and fine_sample_bins > 0
         self.course_sample_bins = course_sample_bins
         self.fine_sample_bins = fine_sample_bins
         self.depth_loss_koef = depth_loss_koef
@@ -25,17 +26,17 @@ class NERF(nn.Module):
         self._positional_encoding = positional_embedding
         self._mlp = MLP(self._positional_encoding.encoding_dimension, 4)
 
-        self._inverted_camera_matrix = torch.tensor(camera_info.get_inverted_camera_matrix())
-        self._default_color = torch.tensor(camera_info.get_default_color())
-        self._default_depth = torch.tensor(camera_info.get_default_depth())
+        self._inverted_camera_matrix = torch.tensor(camera_info.get_inverted_camera_matrix(), requires_grad=False)
+        self._default_color = torch.tensor(camera_info.get_default_color(), requires_grad=False)
+        self._default_depth = torch.tensor(camera_info.get_default_depth(), requires_grad=False)
         self._loss = nn.L1Loss(reduction="none")
-        self._positions = None
 
     def forward(self, pixel, camera_position):
         """
-        :param pixel:
-        :param camera_position: [[R 0],
+        :param pixel: (batch_size, 2), [x, y]
+        :param camera_position: [[R.t 0],
                                 [T 1]]
+                                supposed that R is transposed for compatability with pytorch3d transformations
         :return:
         """
         with torch.no_grad():
@@ -67,19 +68,21 @@ class NERF(nn.Module):
         return course_color, course_depths, fine_color, fine_depths, course_depth_variance, fine_depth_variance
 
     def reconstruct_color_and_depths(self, sampled_depths, pixels, camera_positions, mlp_model):
+        """
+        :param sampled_depths:
+        :param pixels:
+        :param camera_positions: [[R T],
+                                  [0 1]]
+        :param mlp_model:
+        :return:
+        """
         bins_count = sampled_depths.shape[0]
-        sampled_depths = torch.sort(sampled_depths, dim=0).values
-        sampled_depths = sampled_depths.reshape(-1)
-        pixels = self.repeat_tensor(pixels, bins_count)
-
-        back_projected_points = back_project_pixel(pixels, sampled_depths, camera_positions,
+        depths = torch.sort(sampled_depths, dim=0).values
+        back_projected_points = back_project_pixel(pixels, depths, camera_positions,
                                                    self._inverted_camera_matrix)
-        encodings = self._positional_encoding(back_projected_points)
-        prediction = mlp_model(encodings)
-
-        colors = torch.sigmoid(prediction[:, :3]).reshape(bins_count, -1, 3)
-        density = prediction[:, 3].reshape(bins_count, -1)
-        depths = sampled_depths.reshape(bins_count, -1)
+        colors, density = self.forward_network(back_projected_points, mlp_model)
+        colors = colors.reshape(bins_count, -1, 3)
+        density = density.reshape(bins_count, -1)
         weights = self.calculate_weights(density, depths)
 
         reconstructed_color = self.reconstruct_color(colors, weights, self._default_color)
@@ -89,15 +92,37 @@ class NERF(nn.Module):
                                                                            self._default_depth)
         return reconstructed_color, reconstructed_depths, weights, reconstructed_depth_variance
 
+    def forward_network(self, points, mlp_model):
+        """
+        :param points: (batch_size, 3)
+        :param mlp_model:
+        :return: colors
+        """
+        encodings = self._positional_encoding(points)
+        prediction = mlp_model(encodings)
+        colors = torch.sigmoid(prediction[:, :3])
+        density = torch.relu(prediction[:, 3])
+        return colors, density
+
     def stratified_sample_depths(self, batch_size, device, bins_count, deterministic=False):
+        """
+        :param batch_size: int
+        :param device
+        :param bins_count: int
+        :param deterministic: bool
+        :return: (bins_count, batch_size)
+            result[0] - the closest depths
+            result[-1] - the farthest depths
+        """
         if deterministic:
             depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
-            result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device)
+            result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device,
+                                  requires_grad=False)
             result = torch.repeat_interleave(result[:, None], batch_size, dim=1)
             return result
-        uniform = torch.rand((bins_count, batch_size), device=device)
+        uniform = torch.rand((bins_count, batch_size), device=device, requires_grad=False)
         uniform[0] = 1
-        result = (torch.arange(bins_count, device=device)[:, None] + uniform - 1
+        result = (torch.arange(bins_count, device=device, requires_grad=False)[:, None] + uniform - 1
                   ) * (self._default_depth - self.minimal_depth) / (bins_count - 1) + self.minimal_depth
         return result
 
@@ -134,16 +159,9 @@ class NERF(nn.Module):
         result = torch.min(maximal * torch.ones_like(indexes), result)
         return result
 
-    @staticmethod
-    def repeat_tensor(tensor, bins_count):
-        result = torch.repeat_interleave(tensor[None], bins_count, dim=0)
-        result = result.reshape(-1, *tensor.shape[1:])
-        return result
-
     def calculate_weights(self, densities, depths):
         weights = []
         product = 1
-        densities = torch.logsumexp(torch.cat([torch.zeros_like(densities)[None], densities[None]], dim=0), dim=0)
         for i in range(len(depths)):
             if i < len(depths) - 1:
                 depth_delta = depths[i + 1] - depths[i]
