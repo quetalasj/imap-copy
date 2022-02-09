@@ -28,17 +28,14 @@ class Camera(object):
         return State(processed_color_image, processed_depth_image, pixel_weights, processed_position)
 
     def process_depth_image(self, depth_image):
-        depth_image = self.convert_depths(depth_image)[0]
-        processed_depth_image = np.clip(depth_image, 0, self._clip_depth_distance_threshold)
+        depth_image = self.convert_depths(depth_image)
+        depth_image[np.logical_or(depth_image > self._clip_depth_distance_threshold,
+                                  depth_image <= 0)] = np.nan
 
-        valid_depth_pixels = np.all(
-            np.concatenate(((depth_image > 0)[:, :, None],
-                            (depth_image < self._clip_depth_distance_threshold)[:, :, None]),
-                           axis=-1),
-            axis=-1)
+        valid_depth_pixels = ~np.isnan(depth_image)
         pixel_weights = valid_depth_pixels / np.sum(valid_depth_pixels)
 
-        return processed_depth_image, pixel_weights
+        return depth_image, pixel_weights
 
     def convert_depths(self, depth_image):
         """
@@ -50,7 +47,8 @@ class Camera(object):
         homogeneous_pixel = np.array([x, y, np.ones(y.shape[0])])
         homogeneous_keypoints = self._inverted_camera_matrix @ homogeneous_pixel
         koefs = np.linalg.norm(homogeneous_keypoints.T, axis=1).reshape(depth_image.shape[0], depth_image.shape[1])
-        result = (depth_image * koefs[None, :, :] * self._distance_koef).astype(np.float32)
+        result = (depth_image * koefs[None, :, :] * self._distance_koef).astype(np.float32)[0]
+        # result = depth_image * self._distance_koef
         return result
 
     def process_color_image(self, color_image):
