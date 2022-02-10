@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from imap.model.implicit_representations.mlp import MLP
 from ..utils.torch_math import back_project_pixel
+from imap.model.model_loss import ModelLoss
 
 
 class NERF(nn.Module):
@@ -204,7 +205,7 @@ class NERF(nn.Module):
         :param true_depths:
         :return: { "key": array}    array.shape == torch.size([num_points])
         """
-        course_image_loss = self.photometric_loss(output[0], true_colors)
+        coarse_image_loss = self.photometric_loss(output[0], true_colors)
         fine_image_loss = self.photometric_loss(output[2], true_colors)
 
         coarse_depth_loss = self.normalized_geometric_loss(
@@ -215,19 +216,14 @@ class NERF(nn.Module):
             self.geometric_loss(output[3], true_depths),
             torch.sqrt(output[5]) + 1e-10
         )
-        # image_loss = course_image_loss + fine_image_loss
+        # image_loss = coarse_image_loss + fine_image_loss
         # depth_loss = coarse_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
         depth_loss = fine_depth_loss
         loss = self.color_loss_koef * image_loss + self.depth_loss_koef * depth_loss
-        losses = {
-            "coarse_image_loss": course_image_loss,
-            "coarse_depth_loss": coarse_depth_loss,
-            "fine_image_loss": fine_image_loss,
-            "fine_depth_loss": fine_depth_loss,
-            "loss": loss
-        }
+        losses = ModelLoss(coarse_image_loss,
+                           coarse_depth_loss,
+                           fine_image_loss,
+                           fine_depth_loss,
+                           loss)
         return losses
-
-    def mean_loss(self, loss):
-        return torch.mean(loss)

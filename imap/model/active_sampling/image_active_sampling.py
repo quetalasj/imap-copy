@@ -20,14 +20,29 @@ class ImageActiveSampling:
 
         self._grid_masks = self.get_grid_masks()
 
+    def sample_batch(self, state, pixel_weights, device):
+        y, x = self.sample_pixels(pixel_weights)
+        return self.get_training_data(state, y, x, device)
 
     @staticmethod
-    def get_training_data(state, y, x):
+    def get_training_data(state, y, x, device):
+        """
+        :param state:
+        :param y:
+        :param x:
+        :param device:
+        :return:
+        data_batch: {"pixel": np.array([x, y], dtype=np.float32),
+                     "color": self._color_images[image_index, y, x],
+                     "depth": self._depth_images[image_index, y, x],
+                     "camera_position": self._positions[image_index]
+                      }
+        """
         result = {
-                "pixel": torch.from_numpy(np.array([x, y], dtype=np.float32).T),
-                "color": torch.from_numpy(state.frame.color_image[y, x]),
-                "depth": torch.from_numpy(state.frame.depth_image[y, x]),
-                "camera_position": state.get_matrix_position()
+                "pixel": torch.from_numpy(np.array([x, y], dtype=np.float32).T).to(device),
+                "color": torch.from_numpy(state.frame.color_image[y, x]).to(device),
+                "depth": torch.from_numpy(state.frame.depth_image[y, x]).to(device),
+                "camera_position": state.get_matrix_position().to(device)
                 }
         assert len(result['pixel'].shape) == 2 and result['pixel'].shape[1] == 2
         assert len(result['color'].shape) == 2 and result['color'].shape[1] == 3
@@ -66,7 +81,6 @@ class ImageActiveSampling:
                     self._default_pixel_weights[mask] = 0
                 else:
                     self._default_pixel_weights[mask] = average_region_loss.item()
-
 
             if prior_probs is not None:
                 self._default_pixel_weights *= prior_probs
