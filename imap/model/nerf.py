@@ -3,6 +3,8 @@ import torch.nn as nn
 
 from imap.model.implicit_representations.mlp import MLP
 from ..utils.torch_math import back_project_pixel
+from imap.model.model_predict import Predict
+from imap.model.model_loss import ModelLoss
 
 
 class NERF(nn.Module):
@@ -31,7 +33,7 @@ class NERF(nn.Module):
         self._default_depth = torch.tensor(camera_info.get_default_depth(), requires_grad=False)
         self._loss = nn.L1Loss(reduction="none")
 
-    def forward(self, pixel, camera_position):
+    def forward(self, pixel, camera_position, true_depths):
         """
         :param pixel: (batch_size, 2), [x, y]
         :param camera_position: [[R.t 0],
@@ -41,10 +43,14 @@ class NERF(nn.Module):
         """
         with torch.no_grad():
             course_sampled_depths = self.stratified_sample_depths(
+                # true_depths,
                 pixel.shape[0],
                 pixel.device,
                 self.course_sample_bins,
-                not self.training)
+                # self.fine_sample_bins,
+                # 0.005,
+                not self.training
+                )
         course_color, course_depths, course_weights, course_depth_variance = self.reconstruct_color_and_depths(
             course_sampled_depths,
             pixel,
@@ -65,7 +71,7 @@ class NERF(nn.Module):
             pixel,
             camera_position.T,
             self._mlp)
-        return course_color, course_depths, fine_color, fine_depths, course_depth_variance, fine_depth_variance
+        return Predict(fine_color, fine_depths, fine_depth_variance, course_color, course_depths, course_depth_variance)
 
     def reconstruct_color_and_depths(self, sampled_depths, pixels, camera_positions, mlp_model):
         """
@@ -115,9 +121,9 @@ class NERF(nn.Module):
             result[-1] - the farthest depths
         """
         if deterministic:
-            depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
-            result = torch.arange(self.minimal_depth, self._default_depth.item(), depth_delta, device=device,
-                                  requires_grad=False)
+            # depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
+            result = torch.linspace(self.minimal_depth, self._default_depth.item(), bins_count, device=device,
+                                    requires_grad=False)
             result = torch.repeat_interleave(result[:, None], batch_size, dim=1)
             return result
         uniform = torch.rand((bins_count, batch_size), device=device, requires_grad=False)
@@ -126,8 +132,34 @@ class NERF(nn.Module):
                   ) * (self._default_depth - self.minimal_depth) / (bins_count - 1) + self.minimal_depth
         return result
 
+    # def stratified_sample_depths(self, true_depths, batch_size, device, bins_count, fine_bins_count,
+    #                              sigma, deterministic=False):
+    #     """
+    #     :param batch_size: int
+    #     :param device
+    #     :param bins_count: int
+    #     :param deterministic: bool
+    #     :return: (bins_count, batch_size)
+    #         result[0] - the closest depths
+    #         result[-1] - the farthest depths
+    #     """
+    #     if deterministic:
+    #         # depth_delta = (self._default_depth.item() - self.minimal_depth) / bins_count
+    #         result = torch.linspace(self.minimal_depth, self._default_depth.item(), bins_count, device=device,
+    #                                 requires_grad=False)
+    #         result = torch.repeat_interleave(result[:, None], batch_size, dim=1)
+    #         return result
+    #     uniform = torch.rand((bins_count, batch_size), device=device, requires_grad=False)
+    #     uniform[0] = 1
+    #     result = (torch.arange(bins_count, device=device, requires_grad=False)[:, None] + uniform - 1
+    #               ) * (self._default_depth - self.minimal_depth) / (bins_count - 1) + self.minimal_depth
+    #
+    #     # uniform_part = Uniform(torch.tensor([self.minimal_depth]).to(device), true_depths).sample(torch.Size([bins_count]))
+    #     precise_sampling = true_depths + torch.randn((fine_bins_count, batch_size), device=device) * torch.tensor(sigma, device=device)
+    #     return torch.cat((result, precise_sampling))
+
     def hierarchical_sample_depths(self, weights, batch_size, device, bins_count, bins, deterministic=False):
-        weights = weights.transpose(1, 0)[:, :-1] + 1e-10
+        weights = weights.transpose(1, 0) + 1e-10
         pdf = weights / torch.sum(weights, dim=1)[:, None]
         cdf = torch.cumsum(pdf, dim=1)
         cdf = torch.cat([torch.zeros_like(cdf[:, :1]), cdf], 1)
@@ -160,32 +192,35 @@ class NERF(nn.Module):
         return result
 
     def calculate_weights(self, densities, depths):
-        weights = []
-        product = 1
-        for i in range(len(depths)):
-            if i < len(depths) - 1:
-                depth_delta = depths[i + 1] - depths[i]
-            else:
-                depth_delta = self._default_depth - depths[i]
-            hit_probability = 1 - torch.exp(-densities[i] * depth_delta)
-            weights.append(hit_probability * product)
-            product = product * (1 - hit_probability)
-        weights.append(product)
-        return torch.stack(weights, dim=0)
+        """
+        :param densities: (bin_count, batch_size)
+        :param depths: (bin_count, batch_size)
+        :return: (bin_count, batch_size)
+        """
+        depths = torch.cat((depths, torch.ones((1, depths.shape[1]), device=densities.device) * self._default_depth),
+                           dim=0)
+        d_deltas = depths[1:, :] - depths[:-1, :]
+        occupancy_probs = (1 - torch.exp(-d_deltas * densities))
+        cum_prod = torch.cumprod(1 - occupancy_probs, dim=0)
+        weights = torch.ones(densities.shape, device=densities.device)
+        weights[1:, :] = cum_prod[:-1, :]
+        weights *= occupancy_probs
+        # weights.append(product)
+        return weights
 
     @staticmethod
     def reconstruct_color(colors, weights, default_color):
-        return torch.sum(colors * weights[:-1, :, None], dim=0
-                         ) + default_color.to(colors.device)[None] * weights[-1, :, None]
+        return torch.sum(colors * weights[:, :, None], dim=0
+                         ) #+ default_color.to(colors.device)[None] * weights[-1, :, None]
 
     @staticmethod
     def reconstruct_depth(depths, weights, default_depth):
-        return torch.sum(depths * weights[:-1, :], dim=0) + default_depth.to(depths.device)[None] * weights[-1]
+        return torch.sum(depths * weights[:, :], dim=0) #+ default_depth.to(depths.device)[None] * weights[-1]
 
     @staticmethod
     def reconstruct_depth_variance(depths, weights, mean_depths, default_depth):
-        return torch.sum((depths - mean_depths[None]) ** 2 * weights[:-1], dim=0
-                         ) + (default_depth.to(depths.device)[None] - mean_depths) ** 2 * weights[-1]
+        return torch.sum((depths - mean_depths[None]) ** 2 * weights[:], dim=0
+                         ) #+ (default_depth.to(depths.device)[None] - mean_depths) ** 2 * weights[-1]
 
     def photometric_loss(self, rendered_colors, true_colors):
         return torch.mean(self._loss(rendered_colors, true_colors), dim=1)
@@ -196,38 +231,33 @@ class NERF(nn.Module):
     def normalized_geometric_loss(self, geometric_loss, depth_variance):
         return geometric_loss / depth_variance
 
-    def losses(self, output, true_colors, true_depths):
+    def losses(self, predict, true_colors, true_depths):
         """
         Return photometric & geometric losses for fine & coarse reconstructions
-        :param output:
+        :param predict: Predict
         :param true_colors:
         :param true_depths:
         :return: { "key": array}    array.shape == torch.size([num_points])
         """
-        course_image_loss = self.photometric_loss(output[0], true_colors)
-        fine_image_loss = self.photometric_loss(output[2], true_colors)
+        coarse_image_loss = self.photometric_loss(predict.coarse_color, true_colors)
+        fine_image_loss = self.photometric_loss(predict.fine_color, true_colors)
 
         coarse_depth_loss = self.normalized_geometric_loss(
-            self.geometric_loss(output[1], true_depths),
-            torch.sqrt(output[4]) + 1e-10
+            self.geometric_loss(predict.coarse_depths, true_depths),
+            torch.sqrt(predict.coarse_depth_variance) + 1e-10
         )
         fine_depth_loss = self.normalized_geometric_loss(
-            self.geometric_loss(output[3], true_depths),
-            torch.sqrt(output[5]) + 1e-10
+            self.geometric_loss(predict.fine_depths, true_depths),
+            torch.sqrt(predict.fine_depth_variance) + 1e-10
         )
         # image_loss = course_image_loss + fine_image_loss
         # depth_loss = coarse_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
         depth_loss = fine_depth_loss
         loss = self.color_loss_koef * image_loss + self.depth_loss_koef * depth_loss
-        losses = {
-            "coarse_image_loss": course_image_loss,
-            "coarse_depth_loss": coarse_depth_loss,
-            "fine_image_loss": fine_image_loss,
-            "fine_depth_loss": fine_depth_loss,
-            "loss": loss
-        }
+        losses = ModelLoss(coarse_image_loss,
+                           coarse_depth_loss,
+                           fine_image_loss,
+                           fine_depth_loss,
+                           loss)
         return losses
-
-    def mean_loss(self, loss):
-        return torch.mean(loss)
