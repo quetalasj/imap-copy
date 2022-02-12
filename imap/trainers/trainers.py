@@ -4,10 +4,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class ModelTrainer:
-    def __init__(self, image_active_sampler):
+    def __init__(self, image_active_sampler, device='cuda'):
         self.opt_params = None
         self._image_active_sampler = image_active_sampler
         self.localization_poses = []
+        self._device = device
 
     def train_model(self,
                     model,
@@ -86,14 +87,14 @@ class ModelTrainer:
         self.load_optimizer_state(optimizer)
         optimizer.zero_grad()
 
-        losses, data_batch = self.sample_and_backward_batch(state, state.frame.get_pixel_probs(), model)
+        losses, data_batch = self.backward_batch(state, state.frame.get_pixel_probs(), model)
         if is_image_active_sampling:
             new_pixel_weights = self._image_active_sampler.estimate_pixels_weights(
                 data_batch['pixel'],
                 losses.loss,
                 state.frame.get_pixel_probs())
 
-            losses, data_batch = self.sample_and_backward_batch(state, new_pixel_weights, model)
+            losses, data_batch = self.backward_batch(state, new_pixel_weights, model)
 
         optimizer.step()
         optimizer.zero_grad()
@@ -101,20 +102,12 @@ class ModelTrainer:
 
         return losses
 
-    def sample_and_backward_batch(self, state, pixel_weights, model):
-        data_batch = self.sample_batch(state, pixel_weights)
-        return self.backward_batch(model, data_batch), data_batch
-
-    def sample_batch(self, state, weights):
-        y, x = self._image_active_sampler.sample_pixels(weights)
-        data_batch = self._image_active_sampler.get_training_data(state, y, x)
-        ModelTrainer.send_batch_to_model_device(data_batch)
-        return data_batch
-
-    def backward_batch(self, model, data_batch):
-        losses = self.forward_model(model, data_batch)
+    def backward_batch(self, state, pixel_weights, model):
+        data_batch = self._image_active_sampler.sample_batch(state, pixel_weights, device=self._device)
+        output = model.forward(data_batch["pixel"], data_batch['camera_position'])
+        losses = model.losses(output, data_batch['color'], data_batch['depth'])
         self.backward_mean_loss(model, losses)
-        return losses
+        return losses, data_batch
 
     def save_optimizer_state(self, optimizer):
         self.opt_params = optimizer.state_dict()
@@ -122,11 +115,6 @@ class ModelTrainer:
     def load_optimizer_state(self, optimizer):
         if self.opt_params is not None:
             optimizer.load_state_dict(self.opt_params)
-
-    @staticmethod
-    def forward_model(model, data_batch):
-        output = model.forward(data_batch["pixel"], data_batch['camera_position'])
-        return model.losses(output, data_batch['color'], data_batch['depth'])
 
     def reset_params(self):
         self.opt_params = None
