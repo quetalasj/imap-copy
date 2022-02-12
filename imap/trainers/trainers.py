@@ -83,22 +83,6 @@ class ModelTrainer:
         return self.localization_poses
 
     def train(self, model, optimizer, state, is_image_active_sampling):
-        """
-        Train the model one epoch on batch of data
-        :param model:
-        :param data_batch: {
-                            "pixel": np.array([x, y], dtype=np.float32),
-                            "color": self._color_images[image_index, y, x],
-                            "depth": self._depth_images[image_index, y, x],
-                            "camera_position": self._positions[image_index]
-                             }
-        input_data["pixel"].shape = [batch_size, 2]
-        input_data["color"].shape = [batch_size, 3]
-        input_data["depth"].shape = [batch_size]
-        input_data["camera_position"].shape = [4, 4]
-        :return:
-        """
-
         self.load_optimizer_state(optimizer)
         optimizer.zero_grad()
 
@@ -106,7 +90,7 @@ class ModelTrainer:
         if is_image_active_sampling:
             new_pixel_weights = self._image_active_sampler.estimate_pixels_weights(
                 data_batch['pixel'],
-                losses['loss'],
+                losses.loss,
                 state.frame.get_pixel_probs())
 
             losses, data_batch = self.sample_and_backward_batch(state, new_pixel_weights, model)
@@ -149,7 +133,7 @@ class ModelTrainer:
 
     @staticmethod
     def backward_mean_loss(model, losses):
-        mean_loss = model.mean_loss(losses['loss'])
+        mean_loss = model.mean_loss(losses.loss)
         mean_loss.backward()
         return mean_loss.item()
 
@@ -163,16 +147,11 @@ class ModelTrainer:
     @staticmethod
     def log_losses(writer, loss, i, verbose):
         if verbose:
-            writer.add_scalar('image/coarse_image_loss', torch.mean(loss['coarse_image_loss']).item(), i,
-                              new_style=True)
-            writer.add_scalar('image/fine_image_loss', torch.mean(loss['fine_image_loss']).item(), i,
-                              new_style=True)
-            writer.add_scalar('depth/coarse_depth_loss', torch.mean(loss['coarse_depth_loss']).item(), i,
-                              new_style=True)
-            writer.add_scalar('depth/fine_depth_loss', torch.mean(loss['fine_depth_loss']).item(), i,
-                              new_style=True)
-            writer.add_scalar('loss', torch.mean(loss['loss']).item(), i,
-                              new_style=True)
+            writer.add_scalar('image/coarse_image_loss', torch.mean(loss.coarse_image_loss).item(), i, new_style=True)
+            writer.add_scalar('image/fine_image_loss', torch.mean(loss.fine_image_loss).item(), i, new_style=True)
+            writer.add_scalar('depth/coarse_depth_loss', torch.mean(loss.coarse_depth_loss).item(), i, new_style=True)
+            writer.add_scalar('depth/fine_depth_loss', torch.mean(loss.fine_depth_loss).item(), i, new_style=True)
+            writer.add_scalar('loss', torch.mean(loss.loss).item(), i, new_style=True)
 
     @staticmethod
     def check_optimizer_params(optimizer_params):
