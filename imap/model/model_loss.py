@@ -42,5 +42,12 @@ class ModelLoss:
                          self.fine_depth_loss.detach(),
                          self.loss.detach())
 
+    def item(self):
+        return ModelLoss(self.coarse_image_loss.item(),
+                         self.coarse_depth_loss.item(),
+                         self.fine_image_loss.item(),
+                         self.fine_depth_loss.item(),
+                         self.loss.item())
+
     def __lt__(self, other):
         return self.loss < other.loss

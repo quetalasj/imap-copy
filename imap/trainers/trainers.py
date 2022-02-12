@@ -39,7 +39,7 @@ class ModelTrainer:
                     optimizer.step()
                     # optimizer.zero_grad()
                     # self.save_optimizer_state(optimizer)
-                logger.log_losses(mean_loss, i, verbose=verbose)
+                logger.log(state, mean_loss, i, verbose=verbose)
 
             optimizer.zero_grad()
             del loss, optimizer
