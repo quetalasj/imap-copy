@@ -2,6 +2,7 @@ import torch
 from tqdm.auto import tqdm, trange
 from imap.trainers.train_logger import TrainLogger
 
+
 class ModelTrainer:
     def __init__(self, image_active_sampler, device='cuda'):
         self.opt_params = None
@@ -14,23 +15,22 @@ class ModelTrainer:
                     dataset_loader,
                     num_epochs,
                     is_image_active_sampling,
-                    optimizer_params=None,
+                    lr=0.005,
                     verbose=True):
         """
         :param model:
         :param dataset_loader:
         :param num_epochs:
         :param is_image_active_sampling:
-        :param optimizer_params:  Default lr=0.005
+        :param lr:  default 0.005
         :param verbose:
         :return:
         """
-        optimizer_params = ModelTrainer.check_optimizer_params(optimizer_params)
         with TrainLogger('model_training') as logger:
             model.requires_grad_(True)
             model.cuda()
             model.train()
-            optimizer = torch.optim.Adam(model.parameters(), **optimizer_params)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
             for i in trange(num_epochs):
                 for state in dataset_loader:
                     # self.load_optimizer_state(optimizer)
@@ -92,7 +92,7 @@ class ModelTrainer:
         losses, data_batch, mean_losses = self.backward_batch(state, state.frame.get_pixel_probs(), model)
         if is_image_active_sampling:
             new_pixel_weights = self._image_active_sampler.estimate_pixels_weights(
-                data_batch['pixel'],
+                data_batch.pixels,
                 losses.loss,
                 state.frame.get_pixel_probs())
 
@@ -101,9 +101,9 @@ class ModelTrainer:
         return losses, mean_losses
 
     def backward_batch(self, state, pixel_weights, model):
-        data_batch = self._image_active_sampler.sample_batch(state, pixel_weights, device=self._device)
-        output = model.forward(data_batch["pixel"], data_batch['camera_position'])
-        losses = model.losses(output, data_batch['color'], data_batch['depth'])
+        data_batch = self._image_active_sampler.sample_batch(state, pixel_weights).torch_from_numpy().to(self._device)
+        output = model.forward(data_batch.pixels, data_batch.camera_position)
+        losses = model.losses(output, data_batch.colors, data_batch.depths)
         mean_loss = losses.mean_loss()
         mean_loss.loss.backward()
         return losses, data_batch, mean_loss
@@ -117,16 +117,3 @@ class ModelTrainer:
 
     def reset_params(self):
         self.opt_params = None
-
-    @staticmethod
-    def send_batch_to_model_device(batch, device='cuda'):
-        batch['pixel'] = batch['pixel'].to(device)
-        batch['color'] = batch['color'].to(device)
-        batch['depth'] = batch['depth'].to(device)
-        batch['camera_position'] = batch['camera_position'].to(device)
-
-    @staticmethod
-    def check_optimizer_params(optimizer_params):
-        if optimizer_params is None:
-            optimizer_params = {'lr': 0.005}
-        return optimizer_params
