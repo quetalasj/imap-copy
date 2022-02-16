@@ -1,6 +1,7 @@
-from imap.utils.utils import generate_image_meshgrid, get_ji_pixels_from_meshgrid
 import numpy as np
 import torch
+from imap.utils.utils import generate_image_meshgrid, get_ji_pixels_from_meshgrid
+from imap.data.data_batch import DataBatch
 
 
 class ImageActiveSampling:
@@ -20,21 +21,12 @@ class ImageActiveSampling:
 
         self._grid_masks = self.get_grid_masks()
 
-
-    @staticmethod
-    def get_training_data(state, y, x):
-        result = {
-                "pixel": torch.from_numpy(np.array([x, y], dtype=np.float32).T),
-                "color": torch.from_numpy(state.frame.color_image[y, x]),
-                "depth": torch.from_numpy(state.frame.depth_image[y, x]),
-                "camera_position": state.get_matrix_position()
-                }
-        assert len(result['pixel'].shape) == 2 and result['pixel'].shape[1] == 2
-        assert len(result['color'].shape) == 2 and result['color'].shape[1] == 3
-        assert len(result['depth'].shape) == 1
-        assert len(result['camera_position'].shape) == 2 and result['camera_position'].shape[0] == 4 and \
-               result['camera_position'].shape[1] == 4
-        return result
+    def sample_batch(self, state, pixel_weights):
+        y, x = self.sample_pixels(pixel_weights)
+        return DataBatch(np.array([x, y], dtype=np.float32).T,
+                         state.frame.color_image[y, x],
+                         state.frame.depth_image[y, x],
+                         state.get_matrix_position())
 
     def sample_pixels(self, p):
         """
@@ -66,7 +58,6 @@ class ImageActiveSampling:
                     self._default_pixel_weights[mask] = 0
                 else:
                     self._default_pixel_weights[mask] = average_region_loss.item()
-
 
             if prior_probs is not None:
                 self._default_pixel_weights *= prior_probs

@@ -27,15 +27,7 @@ class ImageRenderer:
         pixels = self._generate_image_frame()
         for i in range(pixels.shape[0] // self.batch_size):
             data_batch = pixels[i * self.batch_size:i * self.batch_size + self.batch_size].to(device)
-            yield ImageRenderer._output_to_numpy_cpu(model(data_batch, position))
-
-    @staticmethod
-    def _output_to_numpy_cpu(output):
-        np_cpu_output = []
-        for i in range(len(output)):
-            np_cpu_output.append(output[i].detach().cpu().numpy())
-        del output
-        return np_cpu_output
+            yield model(data_batch, position).to_numpy_cpu()
 
     @staticmethod
     def _check_mode(mode):
@@ -46,11 +38,11 @@ class ImageRenderer:
         output_coarse_depth = []
         output_fine_color = []
         output_fine_depth = []
-        for batch_output in tqdm(self._yield_render(model, position)):
-            output_coarse_color.append(batch_output[0])
-            output_coarse_depth.append(batch_output[1])
-            output_fine_color.append(batch_output[2])
-            output_fine_depth.append(batch_output[3])
+        for predict in tqdm(self._yield_render(model, position)):
+            output_coarse_color.append(predict.coarse_color)
+            output_coarse_depth.append(predict.coarse_depths)
+            output_fine_color.append(predict.fine_color)
+            output_fine_depth.append(predict.fine_depths)
 
         output = [self._process_image_output(output_coarse_color),
                   self._process_depth_output(output_coarse_depth),

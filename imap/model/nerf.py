@@ -3,6 +3,8 @@ import torch.nn as nn
 
 from imap.model.implicit_representations.mlp import MLP
 from ..utils.torch_math import back_project_pixel
+from imap.model.model_predict import Predict
+from imap.model.model_loss import ModelLoss
 
 
 class NERF(nn.Module):
@@ -45,14 +47,14 @@ class NERF(nn.Module):
                 pixel.device,
                 self.course_sample_bins,
                 not self.training)
-        course_color, course_depths, course_weights, course_depth_variance = self.reconstruct_color_and_depths(
+        coarse_color, coarse_depths, coarse_weights, coarse_depth_variance = self.reconstruct_color_and_depths(
             course_sampled_depths,
             pixel,
             camera_position.T,
             self._mlp)
         with torch.no_grad():
             fine_sampled_depths = self.hierarchical_sample_depths(
-                course_weights,
+                coarse_weights,
                 pixel.shape[0],
                 pixel.device,
                 self.fine_sample_bins,
@@ -65,7 +67,12 @@ class NERF(nn.Module):
             pixel,
             camera_position.T,
             self._mlp)
-        return course_color, course_depths, fine_color, fine_depths, course_depth_variance, fine_depth_variance
+        return Predict(fine_color,
+                       fine_depths,
+                       fine_depth_variance,
+                       coarse_color,
+                       coarse_depths,
+                       coarse_depth_variance)
 
     def reconstruct_color_and_depths(self, sampled_depths, pixels, camera_positions, mlp_model):
         """
@@ -196,37 +203,31 @@ class NERF(nn.Module):
     def normalized_geometric_loss(self, geometric_loss, depth_variance):
         return geometric_loss / depth_variance
 
-    def losses(self, output, true_colors, true_depths):
+    def losses(self, predict, true_colors, true_depths):
         """
         Return photometric & geometric losses for fine & coarse reconstructions
-        :param output:
+        :param predict: Predict
         :param true_colors:
         :param true_depths:
         :return: { "key": array}    array.shape == torch.size([num_points])
         """
-        course_image_loss = self.photometric_loss(output[0], true_colors)
-        fine_image_loss = self.photometric_loss(output[2], true_colors)
+        coarse_image_loss = self.photometric_loss(predict.coarse_color, true_colors)
+        fine_image_loss = self.photometric_loss(predict.fine_color, true_colors)
 
         coarse_depth_loss = self.normalized_geometric_loss(
-            self.geometric_loss(output[1], true_depths),
-            torch.sqrt(output[4]) + 1e-10
+            self.geometric_loss(predict.coarse_depths, true_depths),
+            torch.sqrt(predict.coarse_depth_variance) + 1e-10
         )
         fine_depth_loss = self.normalized_geometric_loss(
-            self.geometric_loss(output[3], true_depths),
-            torch.sqrt(output[5]) + 1e-10
+            self.geometric_loss(predict.fine_depths, true_depths),
+            torch.sqrt(predict.fine_depth_variance) + 1e-10
         )
         # image_loss = course_image_loss + fine_image_loss
         # depth_loss = coarse_depth_loss + fine_depth_loss
         image_loss = fine_image_loss
         depth_loss = fine_depth_loss
         loss = self.color_loss_koef * image_loss + self.depth_loss_koef * depth_loss
-        losses = {
-            "coarse_image_loss": course_image_loss,
-            "coarse_depth_loss": coarse_depth_loss,
-            "fine_image_loss": fine_image_loss,
-            "fine_depth_loss": fine_depth_loss,
-            "loss": loss
-        }
+        losses = ModelLoss(coarse_image_loss, coarse_depth_loss, fine_image_loss, fine_depth_loss, loss)
         return losses
 
     def mean_loss(self, loss):
